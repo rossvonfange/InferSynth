@@ -2,24 +2,13 @@ __author__ = 'Ross VonFange'
 
 
 from PyQt5.uic import loadUiType
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import pyqtSignal
-import sys, os, pprint, time
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 # ~~~~~~~~~~~~~~~~~~~~~~~~~
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtWidgets import QFileDialog
 
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtGui import QTextDocument
-from PyQt5.QtGui import QFont
-
-import configparser as ConfigParser
-import os
-import time
-import Project
+from infersynth import Project
 import sqlite3
 
 
