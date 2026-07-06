@@ -30,7 +30,9 @@ EXPECTED_CODE_COUNTS = {
     },
     "03_engineer_motor_controller.md": {
         "frd.ears": 17,
-        "frd.no-primitive": 17,
+        # PRT-02 ("Bus overvoltage clamp (regen)") now resolves against the
+        # new output-clamp cell's "overvoltage clamp" keyword.
+        "frd.no-primitive": 16,
         "frd.unclassifiable": 1,
     },
     "04_pcb_designer_daughtercard.md": {

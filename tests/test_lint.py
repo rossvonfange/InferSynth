@@ -154,12 +154,19 @@ def test_vocabulary_is_generated_from_catalog():
         "amplifier gain stage",
         "bypass capacitor",
         "decoupling",
+        "inverting amplifier",
         "non-inverting amplifier",
+        "output clamp",
         "output connector",
         "output header",
+        "overvoltage clamp",
         "power connector",
         "power input connector",
+        "precision reference",
         "sensor connector",
+        "unity buffer",
+        "voltage follower",
+        "voltage reference",
     ]
     keys = [e.cell_key for e in vocab.entries]
     assert keys == sorted(keys)
@@ -192,9 +199,15 @@ def test_resolve_disambiguation_winner_and_param_binding():
     rs = parse_frd_text("- The board shall use a non-inverting amplifier with gain of 100\n")
     (req,) = rs.requirements()
     matches = resolve(req, vocab)
-    assert len(matches) == 2  # both cells claim the keyword
+    # Three claimants: opamp-gain-noninverting (exact "non-inverting
+    # amplifier" keyword), opamp-gain-x4-noninverting (disambiguation rule,
+    # never a primary winner), and opamp-gain-inverting (its "inverting
+    # amplifier" keyword substring-matches inside "non-inverting amplifier";
+    # it also declares a disambiguation rule so it never wins directly).
+    assert len(matches) == 3
     winner = pick_winner(matches)
-    # the x4 cell declares a disambiguation rule -> never inferred directly
+    # both the x4 cell and the inverting cell declare a disambiguation rule
+    # -> neither is ever inferred directly
     assert winner is not None and winner.entry.cell_name == "opamp-gain-noninverting"
     gain = next(b for b in winner.params if b.name == "gain")
     assert gain.value == 100.0 and gain.problem is None

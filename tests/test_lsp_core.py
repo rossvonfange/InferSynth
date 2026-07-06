@@ -92,9 +92,13 @@ def test_completion_items_contain_keyword_and_param():
     labels = {i.label for i in items}
     assert "non-inverting amplifier" in labels
     assert "gain" in labels
+    # Both opamp-gain-noninverting and opamp-gain-inverting now declare a
+    # "gain" param (same idiom-collision pair the catalog disambiguates);
+    # completion_items dedups by (label, is_param), first entry wins in
+    # sorted cell-key order -> opamp-gain-inverting ("i" < "n").
     gain_item = next(i for i in items if i.label == "gain" and i.is_param)
-    assert gain_item.detail.startswith("core/opamp-gain-noninverting@")
-    assert "1.0..1000.0" in gain_item.documentation
+    assert gain_item.detail == "core/opamp-gain-inverting@0.1.0"
+    assert "0.1..1000.0" in gain_item.documentation
 
 
 # --- hover ------------------------------------------------------------------
