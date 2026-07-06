@@ -1,0 +1,98 @@
+# Sallen-Key 2nd-order low-pass filter (unity-gain, equal-R) — SEED_PLAN.md
+# sec 2 signal-path cell (Ch 6, active filters). Fragment authored via
+# KiCAD-MCP-Server, same conventions as the golden cells: hierarchical labels
+# coincident with pin endpoints, 1.27mm grid, ${IS.*} value slot, and the
+# unity-buffer feedback trick (local label "OUT" on the inverting input pin
+# U1/4, hierarchical label "OUT" on the output pin U1/1 — same net by name
+# match, no wire between them).
+#
+# Topology: R1 from IN to node A; R2 from node A to node B (the op-amp's +
+# input); C1 feeds back from node A to OUT; C2 shunts node B to REF (the
+# filter's AC ground reference, not necessarily board GND — lets the stage
+# live on a biased single-supply rail). The op-amp's output is tied to its
+# own inverting input (unity-gain follower wrapped around the passive RC
+# ladder), which is the standard Sallen-Key unity-gain configuration.
+#
+# Design equations (unity-gain, equal-R Sallen-Key low-pass; AoE 3rd ed. ch.6,
+# verify against book):
+#   fc = 1 / (2*pi*R*sqrt(C1*C2))
+#   Q  = 0.5 * sqrt(C1/C2)
+# Derivation of the R/C bindings below: fix R1=R2=R (equal-R) and let the
+# capacitor ratio carry the Q. From Q = 0.5*sqrt(C1/C2):
+#   C1/C2 = 4*Q^2  =>  C1 = 4*Q^2*C2
+# Choosing C2 = c_base_farads (the free scale parameter) gives
+#   C1 = 4 * q^2 * c_base_farads
+# Substituting back into fc = 1/(2*pi*R*sqrt(C1*C2)) with C1=4*Q^2*C2:
+#   sqrt(C1*C2) = sqrt(4*Q^2*C2^2) = 2*Q*C2
+#   fc = 1/(2*pi*R*2*Q*C2)  =>  R = 1/(2*pi*fc*2*Q*C2) = 1/(4*pi*fc*Q*c_base_farads)
+# which is exactly the R1/R2 binding expression below (written out as
+# 6.283185307179586 * 2 == 4*pi, matching the constant already in use by this
+# catalog for 2*pi).
+manifest:
+  name: sallen-key-lowpass-2
+  version: "0.1.0"
+  description: 2nd-order unity-gain Sallen-Key active low-pass filter (equal-R).
+  provenance: "AoE 3rd ed. ch. 6 topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The op-amp (active device) sets the technology, same reasoning as the
+  # other op-amp cells; R1/R2/C1/C2 are passive supporting parts.
+  technology: analog-ic
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  REF: {direction: in, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - active low-pass filter
+    - anti-alias filter
+    - sallen-key
+  # SELECTION.md sec 3: frequency shaping is the filtering tag verbatim.
+  functions:
+    - filtering
+  params:
+    fc_hz:
+      type: float
+      range: [1.0, 1.0e+6]
+    q:
+      type: float
+      range: [0.1, 5.0]
+      default: 0.7071
+    c_base_farads:
+      type: float
+      range: [1.0e-10, 1.0e-6]
+      default: 1.0e-8
+
+bindings:
+  C1: {expr: "4 * q * q * c_base_farads", format: capacitance}
+  C2: {expr: "c_base_farads", format: capacitance}
+  R1: "1 / (6.283185307179586 * fc_hz * 2 * q * c_base_farads)"
+  R2: "1 / (6.283185307179586 * fc_hz * 2 * q * c_base_farads)"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (general-purpose op-amp + 2 resistors + 2 capacitors
+# at typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 1.10, qty1k: 0.45}
+  area_mm2: 55
+  power_mw: 5
+  part_count: 5
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

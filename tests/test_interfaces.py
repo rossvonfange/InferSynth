@@ -347,7 +347,7 @@ class TestCellInterfacesValidation:
         assert cell.interfaces["main"].type == "uart"
 
     def test_real_catalog_still_loads_with_interfaces_yaml_present(self):
-        # The real catalog/interfaces.yaml exists but none of the 14 real
+        # The real catalog/interfaces.yaml exists but none of the 17 real
         # cells claim an interfaces: section (see report for rationale) --
         # loading must still be strict-clean.
         catalog = Catalog.load(GOLDEN_CATALOG)

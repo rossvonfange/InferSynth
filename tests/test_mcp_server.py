@@ -85,7 +85,7 @@ class TestCatalogSearch:
 
     def test_empty_query_returns_everything(self):
         result = tools.catalog_search("", catalog_dir=str(CATALOG))
-        assert len(result["results"]) == 14
+        assert len(result["results"]) == 17
 
 
 class TestCatalogValidate:

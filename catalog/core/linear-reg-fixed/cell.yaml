@@ -1,0 +1,85 @@
+# Fixed-output linear regulator (78xx/LDO class) — SEED_PLAN.md sec 2 power
+# cell (Ch 9, voltage regulators). Fragment authored via KiCAD-MCP-Server,
+# same conventions as the golden cells: hierarchical labels coincident with
+# pin endpoints, 1.27mm grid, ${IS.*} value slot.
+#
+# Archetype symbol used: Regulator_Linear:L7805 ("Positive 1.5A 35V Linear
+# Regulator, Fixed Output 5V, TO-220/TO-263/TO-252") — the task's suggested
+# "Regulator_Linear:L7805_TO220" does not exist as a symbol name in this
+# KiCad 9.0.7 library; L7805 is the actual symbol name in Regulator_Linear
+# (verified via search_symbols/list_symbols_in_library over the MCP server)
+# and is exactly the fixed 3-pin 7805-class part the task calls for. Pins
+# (verified via batch_list_symbol_pins): 1=IN (power_in), 2=GND (power_in),
+# 3=OUT (power_out).
+#
+# Topology: C1 bypasses VIN to GND at the regulator input; C2 bypasses VOUT
+# to GND at the output (standard 78xx application-note bypass pair).
+#
+# Port direction note: VOUT is the first port in this catalog whose `kind`
+# is `power` but whose `direction` is `out` — every other power port so far
+# (VCC/VEE on the op-amp cells, VIN/GND here) is a power *input* the cell
+# consumes. A regulator's output pin is a genuine power *source* the rest of
+# a design can consume from, so `direction: out` is the honest claim; the
+# loader (infersynth.catalog.loader._validate_ports) places no additional
+# constraint tying `kind: power` to any particular direction, so this is a
+# schema-legal, semantically-correct combination.
+manifest:
+  name: linear-reg-fixed
+  version: "0.1.0"
+  description: Fixed-output linear regulator (78xx/LDO class) with input/output bypass caps.
+  provenance: "AoE 3rd ed. ch. 9 topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The regulator IC is the active device; the bypass caps are passive
+  # supporting parts — same reasoning as the op-amp cells.
+  technology: analog-ic
+
+ports:
+  VIN: {direction: in, kind: power}
+  VOUT: {direction: out, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - linear regulator
+    - fixed voltage regulator
+  # SELECTION.md sec 3: rail generation and conditioning is the regulation
+  # tag verbatim.
+  functions:
+    - regulation
+  params:
+    c_in_farads:
+      type: float
+      range: [1.0e-8, 1.0e-3]
+      default: 3.3e-7
+    c_out_farads:
+      type: float
+      range: [1.0e-8, 1.0e-3]
+      default: 1.0e-7
+
+bindings:
+  C1: {expr: "c_in_farads", format: capacitance}
+  C2: {expr: "c_out_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Regulator_Linear:L7805
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (a TO-220 78xx-class regulator + 2 bypass caps at
+# typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.65, qty1k: 0.28}
+  area_mm2: 90
+  power_mw: 500
+  part_count: 3
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
