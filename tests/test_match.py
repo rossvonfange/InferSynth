@@ -442,12 +442,27 @@ class TestVarianceResolution:
 
 
 # --------------------------------------------------------------------------
-# 6. WP-M2 boundary
+# 6. WP-M2 boundary — semantic recall is additive, never changes strict output
 # --------------------------------------------------------------------------
 
 
 class TestWPBoundary:
-    def test_semantic_recall_not_implemented(self):
+    def test_semantic_recall_no_longer_raises(self):
+        # WP-M2 wired recall='semantic' up for real (infersynth/match/embed.py,
+        # infersynth/match/recall.py::semantic_recall); see tests/test_embed.py
+        # for the full semantic-recall test suite. This just pins the
+        # WP-M1/WP-M2 seam: requesting it must not raise.
         cat = Catalog.load(CORE)
-        with pytest.raises(NotImplementedError, match="WP-M2"):
-            match(one_req("gain stage"), cat, knobs=MatchKnobs(recall="semantic"))
+        match(one_req("gain stage"), cat, knobs=MatchKnobs(recall="semantic"))
+
+    def test_strict_mode_candidate_set_unaffected_by_semantic_layer(self):
+        # SELECTION §4/§8 acceptance: none of the seed catalog's cells ship
+        # an embedding.json, so recall='semantic' has nothing to add — the
+        # candidate set for any existing fixture spec must be byte-identical
+        # to strict-mode's (the semantic layer is strictly additive, never
+        # removes/reorders idiom candidates).
+        cat = Catalog.load(CORE)
+        req_text = "non-inverting amplifier gain stage, gain 100"
+        strict = match(one_req(req_text), cat, knobs=MatchKnobs(recall="strict"))
+        semantic = match(one_req(req_text), cat, knobs=MatchKnobs(recall="semantic"))
+        assert strict.candidates == semantic.candidates
