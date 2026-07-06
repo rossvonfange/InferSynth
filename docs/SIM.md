@@ -135,3 +135,108 @@ end-state tier remains unwired).
   scaling of the sampled input.
 * **x4 channel gains are 1, 2, 3, 4** ("gains 1..4"), driven from one shared
   input signal so each channel's gain is independently measured.
+
+## 7. The AMS tier — emitted SystemC-AMS (`infersynth/emit_sysc_ams/`, WP-S2)
+
+The end-state simulation tier of DESIGN.md §4, sitting *above* the v0 tier
+documented in §§1–6: the compiler **emits** standalone SystemC-AMS C++ (TDF
+modules + a testbench) that a real toolchain compiles and runs out-of-process.
+This is **emit, don't bind** (RECON_HARVEST §1; `pysysc_eval.md` is the citable
+prior art — PySysC/cppyy were evaluated and rejected upstream): the generated
+C++ carries no cppyy/PySysC dependency, and InferSynth reads results back from a
+CSV trace the emitted testbench writes. Emission is a **pure function of
+(cell/design, params)** with no timestamps, so generated sources are byte-stable
+and golden-comparable in CI (`tests/fixtures/ams_golden/`).
+
+### AMS model artifact — `model/ams/<cell>.h`
+
+A cell contributes an AMS model as `model/ams/<cell>.h`: a header-only
+SystemC-AMS TDF module whose ports match `cell.yaml` `ports` exactly and whose
+constructor takes the **gain-prefixed idiom params in sorted order** followed by
+the rail-headroom `margin`. Example (opamp-gain-noninverting), mirroring the v0
+`behavior.py` math (`OUT = clip(GND + gain·(IN−GND), VEE+margin, VCC−margin)`):
+
+```cpp
+SCA_TDF_MODULE(opamp_gain_noninverting) {
+    sca_tdf::sca_in<double>  IN, VCC, VEE, GND;
+    sca_tdf::sca_out<double> OUT;
+    const double gain, margin;
+    opamp_gain_noninverting(sc_core::sc_module_name nm, double gain_, double margin_ = 0.1)
+        : IN("IN"), VCC("VCC"), VEE("VEE"), GND("GND"), OUT("OUT"),
+          gain(gain_), margin(margin_) {}
+    void processing() {
+        const double gnd = GND.read();
+        const double ideal = gnd + gain * (IN.read() - gnd);
+        OUT.write(std::min(std::max(ideal, VEE.read()+margin), VCC.read()-margin));
+    }
+};
+```
+
+Header-only (no `.cpp`): the module is a pure function of its ports/params, so a
+header both authors and bundles cleanly into the emitted build. `margin` is the
+same tier constant as the v0 `DEFAULT_RAIL_MARGIN = 0.1 V` (§6), re-exposed as
+`AMS_RAIL_MARGIN`. The two golden op-amp cells ship reference implementations;
+`rg_ohms`/`channels` are structural and are *not* AMS constructor args.
+
+### Precedence (this tier vs. the v0 tier)
+
+Both tiers coexist; **neither replaces the other yet**:
+
+* a cell with `model/ams/<cell>.h` is eligible for the `ams-simulation` gate;
+* `model/behavior.py` remains the v0 `simulation` gate (§5);
+* a cell may carry both (the two golden op-amps do) — the AMS gate cross-validates
+  the v0 gate at one shared operating point, it does not supersede it;
+* a cell with only `behavior.py` runs the v0 gate and loudly SKIPs `ams-simulation`
+  ("no `model/ams/`"); a cell with neither loudly SKIPs both.
+
+### The gate — `ams-simulation` (`infersynth/gates/ams_simulation.py`)
+
+Wired into `run_cell_gates` after the v0 `simulation` gate. Three loud, distinct
+outcomes (DESIGN.md §4 — never a silent pass):
+
+1. cell ships no `model/ams/` → **SKIPPED** (falls back to the v0 tier);
+2. SystemC-AMS toolchain absent → **SKIPPED** (distinct wording; the v0 gate
+   still gives behavioral coverage);
+3. toolchain present + AMS model → emit → compile → run → parse the CSV trace →
+   reuse `infersynth/sim/checks.py` (`amplitude_ratio`, `clipped_within`) →
+   PASS/FAIL.
+
+The real compile/run path is implemented but its end-to-end test is
+`@pytest.mark.sysc_ams`, skipped cleanly when the toolchain is absent — the same
+convention WP4 used for `@pytest.mark.kicad`. **This machine has no SystemC-AMS
+toolchain**, so the gate SKIPs at outcome 2; nothing is ever faked.
+
+### The emitter and the real-kernel seam
+
+* **Cell tier** (`emit_cell`): a self-contained `main.cpp` that drives a
+  deterministic 1 Vpk 1 kHz sine into each electrical input and a DC level onto
+  each rail, instantiates the AMS module with bound params, and records
+  `t` + inputs + outputs to CSV. The operating point (gain values, rails, timing)
+  is read from the cell's v0 `testbench/tb.py` `PARAMS`/rails when present, so the
+  AMS tier cross-validates the v0 `linear` scenario at the *same* point; it falls
+  back to AMS-tier defaults (±12 V, 1000 × 1 µs) otherwise.
+* **Design tier** (`emit_design`): from an `ElaboratedDesign`, a structural
+  `SC_MODULE` top — one `sca_signal` per net, each instance's AMS module a member
+  wired to its nets. Instances lacking an AMS model become a documented
+  passthrough stub and are recorded **loudly** in the `EmissionReport` (the
+  emitted top is flagged NOT a complete behavioral model).
+* **Build**: a generated `Makefile` resolves SystemC + SystemC-AMS include/lib
+  paths from `SYSTEMC_HOME` / `SYSTEMC_AMS_HOME` (the documented env seam).
+* **`AmsKernel` seam** (`toolchain.py`): `detect_toolchain()` is a real probe
+  (C++ compiler + SystemC/SystemC-AMS headers); `SystemCAmsKernel` compiles via
+  the emitted Makefile, runs, and parses the CSV. Swapping in a commercial
+  simulator is a new `AmsKernel` backend, not a rewrite — the same
+  Python-kernel → real-kernel discipline the v0 `kernel.py` docstring documents.
+
+### Conventions this tier chose (not dictated by DESIGN/SELECTION)
+
+* **`model/ams/<cell>.h`, header-only**, module name = cell name with `-`→`_`.
+* **Constructor args = gain-prefixed idiom params (sorted) + `margin`.**
+* **Operating point borrowed from `testbench/tb.py`** for cross-tier validation
+  at one shared point (WP-S2 acceptance §6); AMS-tier defaults when a cell has no
+  v0 testbench.
+* **CSV trace** (`t` + inputs + outputs) as the results file, parsed into the
+  same trace shape the v0 checks consume — one check interface across both tiers.
+* **Per-pair gain check**: the i-th sorted input is paired with the i-th sorted
+  output and the i-th gain param (IN↔OUT; IN1↔OUT1…), so the same emitter serves
+  the single- and quad-channel cells.
