@@ -225,6 +225,10 @@ class TestSchemaV1GoldenCells:
             "core/opamp-gain-inverting@0.1.0",
             "core/vref-shunt@0.1.0",
             "core/output-clamp@0.1.0",
+            "core/summing-offset-stage@0.1.0",
+            "core/adc-driver-rc@0.1.0",
+            "core/current-source-bjt@0.1.0",
+            "core/power-input-conditioning@0.1.0",
         }
         assert all(c.library == "core" for c in catalog.cells.values())
 

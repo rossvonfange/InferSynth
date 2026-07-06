@@ -1,0 +1,70 @@
+# Power input conditioning — SEED_PLAN.md sec 2 power-tier cell (Ch 9
+# practical). Fragment authored via KiCAD-MCP-Server, same conventions as
+# the golden cells: hierarchical labels coincident with pin endpoints,
+# 1.27mm grid, ${IS.*} value slot.
+#
+# Symbol check: Device:Polyfuse, Device:D_Schottky, Device:C_Polarized all
+# exist under those exact names in this KiCad install's Device library
+# (verified via list_symbols_in_library) — no substitutions needed.
+#
+# Topology: F1 (polyfuse) in series from VIN to internal node VP, providing
+# overcurrent/inrush protection. D1 (Schottky) in series from VP to VOUT
+# with anode at VP / cathode at VOUT — conducts VP -> VOUT in the intended
+# polarity and blocks (open) if VIN is ever reversed, protecting downstream
+# circuitry. C1 (polarized bulk cap) from VOUT to GND smooths the
+# conditioned rail. VP is a purely internal node (not a port).
+manifest:
+  name: power-input-conditioning
+  version: "0.1.0"
+  description: Fuse + reverse-polarity Schottky blocking diode + bulk cap input conditioning.
+  provenance: "AoE 3rd ed. ch. 9 practical construction topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # Discrete fuse/diode/cap, no active silicon -> analog-discrete.
+  technology: analog-discrete
+
+ports:
+  VIN: {direction: in, kind: power}
+  VOUT: {direction: out, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - power input protection
+    - reverse polarity protection
+    - input conditioning
+  # SELECTION.md sec 3: fusing + reverse polarity is the protection tag
+  # verbatim ("clamps, fusing, reverse polarity, ESD").
+  functions:
+    - protection
+  params:
+    c_bulk_farads:
+      type: float
+      range: [1.0e-6, 1.0e-2]
+      default: 1.0e-4
+
+bindings:
+  C1: {expr: "c_bulk_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:Polyfuse
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (1 polyfuse + 1 Schottky diode + 1 bulk electrolytic
+# at typical distributor pricing), not a sourced real BOM; dev_hours is 0
+# (no firmware/config engineering).
+costs:
+  bom: {qty1: 0.45, qty1k: 0.18}
+  area_mm2: 30
+  power_mw: 20
+  part_count: 3
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

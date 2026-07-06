@@ -1,0 +1,80 @@
+# BJT constant-current source — SEED_PLAN.md sec 2 power-tier cell (Ch 2,
+# transistor current sources). Fragment authored via KiCAD-MCP-Server, same
+# conventions as the golden cells: hierarchical labels coincident with pin
+# endpoints, 1.27mm grid, ${IS.*} value slot.
+#
+# Symbol deviation: the task spec named "Device:Q_NPN_BCE"; that exact
+# symbol does not exist in this KiCad install's Device library (checked via
+# list_symbols_in_library — only Q_NPN, Q_NPN_BRT, Q_NPN_CurrentMirror,
+# Q_NPN_Darlington are present). Device:Q_NPN already exposes pins literally
+# named B/C/E (the "BCE" naming the task wanted), so it is used directly as
+# the archetype with no functional change.
+#
+# Topology: base biased from the VREF port (a precision reference or
+# resistive divider upstream, outside this cell); collector is the OUT
+# port (delivers the regulated current into the load); emitter goes through
+# R1 to GND — R1 sets the output current via the classic emitter-degeneration
+# current-source equation, assuming a fixed base-emitter drop.
+manifest:
+  name: current-source-bjt
+  version: "0.1.0"
+  description: NPN emitter-degeneration constant-current source.
+  provenance: "AoE 3rd ed. ch. 2 (transistor current sources) topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # A discrete BJT + resistor, no IC -> analog-discrete.
+  technology: analog-discrete
+
+ports:
+  VREF: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - current source
+    - constant current
+  # SELECTION.md sec 3: setting/holding an output current is a regulation
+  # task ("rail generation and conditioning" reads narrowly, but this is the
+  # closest verbatim taxonomy tag for "hold a controlled electrical
+  # quantity steady" short of adding a new tag).
+  functions:
+    - regulation
+  params:
+    i_out_amps:
+      type: float
+      range: [1.0e-5, 0.1]
+      default: 0.001
+    vref_volts:
+      type: float
+      range: [1.0, 10.0]
+      default: 2.5
+
+bindings:
+  # R1 (emitter resistor, ohms) = (Vref - Vbe) / Iout. 0.65 V is an assumed
+  # silicon Vbe drop at moderate collector current — a first-order estimate,
+  # not tied to a specific qualified part (selection.qualification is null).
+  R1: "(vref_volts - 0.65) / i_out_amps"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:Q_NPN
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (1 small-signal NPN + 1 resistor at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.12, qty1k: 0.03}
+  area_mm2: 10
+  power_mw: 5
+  part_count: 2
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0
