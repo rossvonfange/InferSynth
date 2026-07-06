@@ -1,0 +1,50 @@
+# Golden cell #1 — the format-settling artifact (SEED_PLAN.md Phase 0).
+# Fragment authored 2026-07-06 via KiCAD-MCP-Server (feat/upstream-contribution build);
+# conventions it froze: ports = hierarchical labels coincident with pin endpoints;
+# parameter slots = ${IS.<name>} in Value fields; ERC gate runs on a generated
+# harness parent, never the naked fragment.
+manifest:
+  name: opamp-gain-noninverting
+  version: "0.1.0"
+  description: Non-inverting op-amp gain stage (gain = 1 + Rf/Rg).
+  provenance: "AoE 3rd ed. ch. 4 topology (reference only; re-expressed from scratch)"
+  license: GPL-3.0-or-later
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - amplifier gain stage
+    - non-inverting amplifier
+  params:
+    gain:
+      type: float
+      range: [1.0, 1000.0]
+    rg_ohms:
+      type: float
+      range: [100.0, 100000.0]
+      default: 1000.0
+
+bindings:
+  # ${IS.<name>} slots in fragment.kicad_sch, computed from idiom params at
+  # instantiation. Expressions evaluate in a restricted arithmetic namespace;
+  # results are E96-snapped by the binder (v2 scope) or emitted verbatim (v1).
+  R1: "(gain - 1) * rg_ohms"   # feedback resistor, ohms
+  R2: "rg_ohms"                # gain-set resistor, ohms
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt   # net -> {ref/pin} partition captured at authoring
+
+depth:
+  level: L0
