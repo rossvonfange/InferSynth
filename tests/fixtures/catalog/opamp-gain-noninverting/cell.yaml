@@ -1,0 +1,27 @@
+# Fixture cell package: SEED_PLAN.md golden cell no. 1 (schema exercise only).
+manifest:
+  name: opamp-gain-noninverting
+  version: "0.1.0"
+  description: Non-inverting op-amp gain stage (AoE ch. 4 topology, re-expressed).
+  provenance: "AoE 3rd ed. ch. 4 (reference only; topology re-expressed)"
+  license: GPL-3.0-or-later
+
+idioms:
+  keywords:
+    - amplifier gain stage
+    - non-inverting amplifier
+  params:
+    gain:
+      type: float
+      range: [1.0, 1000.0]
+    bandwidth_hz:
+      type: float
+      range: [1.0, 10000000.0]
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: precision
+  qualification: null
+
+depth:
+  level: L0
