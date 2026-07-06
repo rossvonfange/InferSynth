@@ -94,6 +94,26 @@ def _catalog_libraries(catalog: Catalog) -> frozenset[str]:
     )
 
 
+def resolve_pin(cell_ref: str, catalog: Catalog) -> str | None:
+    """Resolve a NETFLOW ``[use:]`` cell reference to a catalog cell key.
+
+    Accepts (most specific first) a full key ``library/cell@version``, a
+    version-less ``library/cell`` (highest version wins), a bare ``cell@version``
+    or bare ``cell`` name. Returns the resolved catalog key, or ``None`` when the
+    reference matches no cell (the matcher then raises ``frd.pin-unresolved``).
+    """
+    if cell_ref in catalog.cells:
+        return cell_ref
+    matches: list[str] = []
+    for key, cell in catalog.cells.items():
+        no_ver = key.rsplit("@", 1)[0]  # library/name
+        if cell_ref in (no_ver, cell.name, cell.bare_key):
+            matches.append(key)
+    if not matches:
+        return None
+    return sorted(matches)[-1]  # deterministic: highest version string
+
+
 def match(
     reqset: RequirementSet,
     catalog: Catalog,
@@ -102,6 +122,7 @@ def match(
     endpoints: dict[str, EndpointSpec] | None = None,
     scorer: ChainScorer | None = None,
     embedding_backend: EmbeddingBackend | None = None,
+    pins: dict[str, str] | None = None,
 ) -> MatchResult:
     """Match a requirement set against a catalog.
 
@@ -130,6 +151,7 @@ def match(
     allocations = allocations or AllocationTable()
     endpoints = endpoints or {}
     scorer = scorer or StructuralScorer()
+    pins = pins or {}
 
     vocab = Vocabulary.from_catalog(catalog)
     all_libraries = _catalog_libraries(catalog)
@@ -163,6 +185,36 @@ def match(
             )
 
     for req in reqset.requirements():  # lintable reqs, document order
+        # --- NETFLOW [use:] pin (authoritative) -----------------------------
+        # A pinned requirement bypasses idiom/semantic recall AND disambiguation
+        # primacy AND endpoint propagation: the pinned cell becomes THE sole
+        # candidate/chain (surfaced_by="pinned"), so the decision layer picks it
+        # as winner regardless of what recall/primacy would otherwise select. An
+        # unresolvable pin is a hard ERROR (never silently ignored).
+        if req.id in pins:
+            resolved = resolve_pin(pins[req.id], catalog)
+            if resolved is None:
+                diagnostics.append(
+                    _diag(
+                        req,
+                        Severity.ERROR,
+                        "frd.pin-unresolved",
+                        f"[use: {pins[req.id]}] does not resolve to any catalog cell",
+                    )
+                )
+                candidates[req.id] = ()
+                chains[req.id] = ()
+                continue
+            pinned = Candidate(
+                requirement_id=req.id, cell_key=resolved, surfaced_by="pinned"
+            )
+            candidates[req.id] = (pinned,)
+            pinned_chain = CandidateChain.make(
+                req.id, (resolved,), closed=True, surfaced_by=("pinned",)
+            )
+            chains[req.id] = score_chains((pinned_chain,), catalog, scorer)
+            continue
+
         scope = resolve_scope(req, allocations, all_libraries)
         in_scope, out_of_scope = idiom_recall(req, vocab, catalog, scope)
 

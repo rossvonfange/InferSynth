@@ -117,6 +117,26 @@ def _lint_vocab(req: Requirement, vocab: Vocabulary) -> list[Diagnostic]:
     return diags
 
 
+def _lint_unknown_pragmas(req: Requirement) -> list[Diagnostic]:
+    """WARN ``frd.unknown-pragma`` for each pragma-shaped-but-unrecognized bracket
+    (NETFLOW.md closed vocabulary — sugar the compiler cannot honor)."""
+    file = req.source.file if req.source else "<frd>"
+    return [
+        Diagnostic(
+            file=file,
+            range=_req_range(req),
+            severity=Severity.WARNING,
+            code="frd.unknown-pragma",
+            message=(
+                f"{req.id}: unrecognized pragma {p.raw!r} — not in the closed "
+                "vocabulary (feeds / use / no-pack); left as prose (NETFLOW.md)"
+            ),
+        )
+        for p in req.pragmas
+        if p.kind == "unknown"
+    ]
+
+
 def lint_requirement_set(
     reqset: RequirementSet, vocab: Vocabulary | None = None
 ) -> list[Diagnostic]:
@@ -127,6 +147,7 @@ def lint_requirement_set(
     for req in reqset:
         if req.is_group:
             continue
+        diags.extend(_lint_unknown_pragmas(req))
         if req.rationale:
             file = req.source.file if req.source else "<frd>"
             diags.append(

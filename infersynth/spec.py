@@ -47,15 +47,30 @@ from infersynth.match.allocation import AllocationError, AllocationTable, alloca
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
 
-__all__ = ["Spec", "SpecError", "load_spec"]
+__all__ = ["Spec", "SpecError", "FeedEdge", "load_spec"]
 
-_TOP_KEYS = {"frd", "allocations", "profile", "endpoints", "knobs"}
+_TOP_KEYS = {"frd", "allocations", "profile", "endpoints", "knobs", "feeds", "pins", "forbid_pack"}
 _KNOB_KEYS = {"recall", "allocation", "absorption"}
 _ABSORPTION_VALUES = ("off", "conservative", "aggressive")
 
 
 class SpecError(ValueError):
     """Raised for a structurally invalid or unreadable spec file."""
+
+
+@dataclass(frozen=True)
+class FeedEdge:
+    """One declared inter-requirement dataflow edge (NETFLOW.md ``feeds``).
+
+    ``src`` feeds ``dst`` (both requirement ids); ``dst_port`` is the optional
+    port/role qualifier on the destination (``None`` when unqualified). Declared
+    feeds are pass-through in this stage (NETFLOW build step 2) — they are
+    surfaced in the report, never yet wired.
+    """
+
+    src: str
+    dst: str
+    dst_port: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +85,30 @@ class Spec:
     knobs: MatchKnobs = field(default_factory=MatchKnobs)
     #: SELECTION §5 packer knob; parsed but not yet consumed (WP-P1 not landed).
     absorption: str | None = None
+    #: NETFLOW declared dataflow edges (spec-file + compiled-pragma, merged).
+    feeds: tuple[FeedEdge, ...] = ()
+    #: NETFLOW pinned cells: requirement id -> ``library/cell[@version]`` ref.
+    pins: dict[str, str] = field(default_factory=dict)
+    #: NETFLOW per-requirement pack forbid (SELECTION §5); requirement ids.
+    forbid_pack: frozenset[str] = frozenset()
+
+    def netflow_mapping(self) -> dict[str, object]:
+        """The three NETFLOW keys as a YAML-round-trippable mapping (dump side).
+
+        Emits only non-empty sections so a spec without netflow intent stays
+        minimal. Inverse of the ``feeds``/``pins``/``forbid_pack`` loaders.
+        """
+        out: dict[str, object] = {}
+        if self.feeds:
+            out["feeds"] = [
+                {"src": e.src, "dst": e.dst, **({"dst_port": e.dst_port} if e.dst_port else {})}
+                for e in self.feeds
+            ]
+        if self.pins:
+            out["pins"] = dict(self.pins)
+        if self.forbid_pack:
+            out["forbid_pack"] = sorted(self.forbid_pack)
+        return out
 
 
 def _require_mapping(value: Any, where: str) -> dict:
@@ -122,6 +161,49 @@ def _load_knobs(raw: Any, where: str) -> tuple[MatchKnobs, str | None]:
     return knobs, absorption
 
 
+def _load_feeds(raw: Any, where: str) -> tuple[FeedEdge, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise SpecError(f"{where} must be a list of {{src, dst[, dst_port]}} mappings")
+    edges: list[FeedEdge] = []
+    for i, entry in enumerate(raw):
+        entry = _require_mapping(entry, f"{where}[{i}]")
+        unknown = sorted(set(entry) - {"src", "dst", "dst_port"})
+        if unknown:
+            raise SpecError(f"{where}[{i}]: unknown key(s) {unknown}")
+        for key in ("src", "dst"):
+            if not (isinstance(entry.get(key), str) and entry[key]):
+                raise SpecError(f"{where}[{i}].{key} must be a non-empty string")
+        port = entry.get("dst_port")
+        if port is not None and not (isinstance(port, str) and port):
+            raise SpecError(f"{where}[{i}].dst_port must be a non-empty string when present")
+        edges.append(FeedEdge(src=entry["src"], dst=entry["dst"], dst_port=port))
+    return tuple(edges)
+
+
+def _load_pins(raw: Any, where: str) -> dict[str, str]:
+    if raw is None:
+        return {}
+    mapping = _require_mapping(raw, where)
+    pins: dict[str, str] = {}
+    for req_id, ref in mapping.items():
+        if not (isinstance(req_id, str) and req_id):
+            raise SpecError(f"{where}: keys must be non-empty requirement id strings")
+        if not (isinstance(ref, str) and ref):
+            raise SpecError(f"{where}[{req_id!r}] must be a non-empty cell-ref string")
+        pins[req_id] = ref
+    return pins
+
+
+def _load_forbid_pack(raw: Any, where: str) -> frozenset[str]:
+    if raw is None:
+        return frozenset()
+    if not (isinstance(raw, list) and all(isinstance(v, str) and v for v in raw)):
+        raise SpecError(f"{where} must be a list of non-empty requirement id strings")
+    return frozenset(raw)
+
+
 def load_spec(path: str | Path) -> Spec:
     """Load and validate a ``spec.yaml`` file. Raises :class:`SpecError`."""
     spec_path = Path(path)
@@ -158,6 +240,9 @@ def load_spec(path: str | Path) -> Spec:
 
     endpoints = _load_endpoints(raw.get("endpoints"), f"{spec_path}: endpoints")
     knobs, absorption = _load_knobs(raw.get("knobs"), f"{spec_path}: knobs")
+    feeds = _load_feeds(raw.get("feeds"), f"{spec_path}: feeds")
+    pins = _load_pins(raw.get("pins"), f"{spec_path}: pins")
+    forbid_pack = _load_forbid_pack(raw.get("forbid_pack"), f"{spec_path}: forbid_pack")
 
     return Spec(
         path=spec_path,
@@ -167,4 +252,7 @@ def load_spec(path: str | Path) -> Spec:
         endpoints=endpoints,
         knobs=knobs,
         absorption=absorption,
+        feeds=feeds,
+        pins=pins,
+        forbid_pack=forbid_pack,
     )

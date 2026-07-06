@@ -20,12 +20,13 @@ from pathlib import Path
 from infersynth.lint.model import (
     GROUP_TAG,
     PROSE_TAG,
+    Pragma,
     Requirement,
     RequirementSet,
     SourceSpan,
 )
 
-__all__ = ["parse_frd_markdown", "parse_frd_text"]
+__all__ = ["parse_frd_markdown", "parse_frd_text", "extract_pragmas"]
 
 # Explicit requirement IDs: dotted (SYS.1.1.1) or dashed (PWR-01, COM-01).
 _DOTTED_ID = r"[A-Z][A-Z0-9]*(?:\.\d+)+"
@@ -44,6 +45,94 @@ _TREE_MARKER_RE = re.compile(r"[├└]──\s*")
 _TREE_PREFIX_RE = re.compile(r"^[\s│├└─]+")
 _PAREN_LINE_RE = re.compile(r"^\(.*\)$", re.DOTALL)
 _INLINE_D_RE = re.compile(r"\s*\[D:?\s*(?P<note>[^\]]*)\]")
+
+# --- FRD pragma grammar (NETFLOW.md "FRD pragmas", closed vocabulary) --------
+# Non-nested bracket group scanner: a single ``[...]`` with no inner brackets.
+_BRACKET_RE = re.compile(r"\[[^\[\]]*\]")
+# Key/value pragma: a lowercase-only head, a colon, then a non-empty payload.
+# Anchored to the whole bracket group; lowercase head is what separates a pragma
+# from the uppercase ``[D:…]`` rationale tag (handled separately, never a pragma).
+_PRAGMA_KV_RE = re.compile(r"^\[(?P<head>[a-z][a-z-]*):\s*(?P<payload>\S.*?)\s*\]$")
+# Bare-flag pragma: a lowercase-only head, no colon, no payload (e.g. ``[no-pack]``).
+_PRAGMA_FLAG_RE = re.compile(r"^\[(?P<head>[a-z][a-z-]*)\]$")
+#: Recognized pragma heads (the closed vocabulary).
+_KV_HEADS = {"feeds", "use"}
+_FLAG_HEADS = {"no-pack"}
+
+
+def _parse_pragma_bracket(token: str) -> Pragma | None:
+    """Classify one bracket ``token`` (e.g. ``"[feeds: R2:IN2]"``) as a pragma.
+
+    Returns a recognized :class:`Pragma` (``feeds``/``use``/``no-pack``), an
+    ``unknown``-kind :class:`Pragma` when the bracket is *pragma-shaped* but not
+    in the closed vocabulary (drives ``frd.unknown-pragma``), or ``None`` when
+    the bracket is plain prose (e.g. ``"[see note above]"``) and must be left
+    untouched.
+
+    Distinguishing rule (exact):
+
+    * ``[D…]`` / any uppercase head — NOT a pragma (rationale tag / prose);
+      the lowercase-only head anchors are what gate this.
+    * KV form ``^\\[[a-z][a-z-]*:\\s*\\S.*\\]$``: ``feeds``/``use`` heads →
+      recognized; any other lowercase head (incl. ``no-pack`` with an argument)
+      → ``unknown`` (pragma-shaped, wrong vocabulary/arity).
+    * Flag form ``^\\[[a-z][a-z-]*\\]$``: ``no-pack`` → recognized; ``feeds``/
+      ``use`` bare (missing required argument) → ``unknown``; every other bare
+      single lowercase word → ``None`` (treated as prose, no false-positive WARN).
+    * Anything else (spaces, mixed case, punctuation) → ``None`` (prose).
+    """
+    kv = _PRAGMA_KV_RE.match(token)
+    if kv:
+        head, payload = kv.group("head"), kv.group("payload")
+        if head == "feeds":
+            target, _, port = payload.partition(":")
+            target = target.strip()
+            port = port.strip() or None
+            return Pragma(kind="feeds", target=target, port=port, raw=token)
+        if head == "use":
+            return Pragma(kind="use", cell_ref=payload.strip(), raw=token)
+        return Pragma(kind="unknown", raw=token)
+    flag = _PRAGMA_FLAG_RE.match(token)
+    if flag:
+        head = flag.group("head")
+        if head in _FLAG_HEADS:
+            return Pragma(kind="no-pack", raw=token)
+        if head in _KV_HEADS:
+            return Pragma(kind="unknown", raw=token)  # missing required argument
+        return None  # bare single lowercase word — prose, not pragma-shaped
+    return None
+
+
+def extract_pragmas(text: str) -> tuple[str, list[Pragma]]:
+    """Split *text* into (clean text, pragmas) — the FRD pragma sugar pass.
+
+    Recognized pragmas (``feeds``/``use``/``no-pack``) are STRIPPED from the
+    returned text, exactly as ``[D:…]`` is stripped. Pragma-shaped-but-unknown
+    brackets are recorded as ``unknown``-kind pragmas (for the WARN) but left in
+    the text. Plain-prose and rationale (``[D…]``) brackets are left untouched.
+    """
+    pragmas: list[Pragma] = []
+    strip_spans: list[tuple[int, int]] = []
+    for m in _BRACKET_RE.finditer(text):
+        token = m.group(0)
+        if token.startswith("[D:") or token.startswith("[D]") or token == "[D]":
+            continue  # rationale tag — handled by the [D:…] pass, never a pragma
+        pragma = _parse_pragma_bracket(token)
+        if pragma is None:
+            continue
+        pragmas.append(pragma)
+        if pragma.kind != "unknown":
+            strip_spans.append(m.span())
+    if strip_spans:
+        out = []
+        last = 0
+        for start, end in strip_spans:
+            out.append(text[last:start])
+            last = end
+        out.append(text[last:])
+        text = "".join(out)
+        text = re.sub(r"\s{2,}", " ", text).strip()
+    return text, pragmas
 
 
 class _Parser:
@@ -293,6 +382,10 @@ class _Parser:
             if _PAREN_LINE_RE.match(node.text) or node.text.startswith("[D"):
                 node.rationale = True
             else:
+                clean, pragmas = extract_pragmas(node.text)
+                if pragmas:
+                    node.text = clean
+                    node.pragmas.extend(pragmas)
                 notes = [
                     mm.group("note").strip() for mm in _INLINE_D_RE.finditer(node.text)
                 ]
