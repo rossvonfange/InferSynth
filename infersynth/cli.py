@@ -111,40 +111,70 @@ def _cmd_catalog_validate(args: argparse.Namespace) -> int:
 
 
 
+def _resolve_spec_inputs(args: argparse.Namespace, cmd: str):
+    """Shared ``--spec``/``--frd``/``--profile``/``--weights`` resolution for
+    ``synthesize``/``decide`` (WP-L1 item 2). ``--frd`` overrides a spec's
+    ``frd:``; ``--profile``/``--weights`` override a spec's ``profile:``.
+    Returns ``(frd_path, profile, allocations, knobs, endpoints)`` or raises
+    ``ValueError``/``SpecError`` (callers already catch both)."""
+    import json
+
+    from infersynth.spec import load_spec
+
+    spec = load_spec(args.spec) if args.spec else None
+
+    frd = args.frd or (str(spec.frd) if spec is not None and spec.frd else None)
+    if not frd:
+        raise ValueError(f"infersynth {cmd}: one of --frd or --spec (with a frd: key) is required")
+
+    if args.profile and args.weights:
+        raise ValueError(f"infersynth {cmd}: --profile and --weights are mutually exclusive")
+    if args.weights:
+        profile = json.loads(args.weights)
+    elif args.profile:
+        profile = args.profile
+    elif spec is not None and spec.profile is not None:
+        profile = spec.profile
+    else:
+        profile = "production"
+
+    allocations = spec.allocations if spec is not None else None
+    knobs = spec.knobs if spec is not None else None
+    endpoints = spec.endpoints if spec is not None else None
+    return frd, profile, allocations, knobs, endpoints
+
+
 def _cmd_synthesize(args: argparse.Namespace) -> int:
     import json
 
     from infersynth.catalog import CatalogError
     from infersynth.decide.lockfile import load as load_lockfile
     from infersynth.lint.reqif_io import ReqIFImportError
+    from infersynth.spec import SpecError
     from infersynth.synthesize import synthesize
 
-    if args.profile and args.weights:
-        print(
-            "infersynth synthesize: --profile and --weights are mutually exclusive",
-            file=sys.stderr,
-        )
+    try:
+        frd, profile, allocations, knobs, endpoints = _resolve_spec_inputs(args, "synthesize")
+    except json.JSONDecodeError as exc:
+        print(f"infersynth synthesize: --weights is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, SpecError) as exc:
+        print(f"infersynth synthesize: {exc}", file=sys.stderr)
         return 2
-    profile: str | dict
-    if args.weights:
-        try:
-            profile = json.loads(args.weights)
-        except json.JSONDecodeError as exc:
-            print(f"infersynth synthesize: --weights is not valid JSON: {exc}", file=sys.stderr)
-            return 1
-    else:
-        profile = args.profile or "production"
 
     try:
         lockfile = load_lockfile(args.lockfile) if args.lockfile else None
         result = synthesize(
-            args.frd,
+            frd,
             args.catalog,
             args.out,
             profile=profile,
             name=args.name,
             lockfile=lockfile,
             write_trace=not args.no_trace,
+            allocations=allocations,
+            knobs=knobs,
+            endpoints=endpoints,
         )
     except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
         print(f"infersynth synthesize: {exc}", file=sys.stderr)
@@ -176,29 +206,27 @@ def _cmd_decide(args: argparse.Namespace) -> int:
     from infersynth.lint import lint_path
     from infersynth.lint.reqif_io import ReqIFImportError
     from infersynth.match import match
+    from infersynth.spec import SpecError
 
-    if args.profile and args.weights:
-        print("infersynth decide: --profile and --weights are mutually exclusive", file=sys.stderr)
+    try:
+        frd, profile, allocations, knobs, endpoints = _resolve_spec_inputs(args, "decide")
+    except json.JSONDecodeError as exc:
+        print(f"infersynth decide: --weights is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, SpecError) as exc:
+        print(f"infersynth decide: {exc}", file=sys.stderr)
         return 2
-    profile: str | dict
-    if args.weights:
-        try:
-            profile = json.loads(args.weights)
-        except json.JSONDecodeError as exc:
-            print(f"infersynth decide: --weights is not valid JSON: {exc}", file=sys.stderr)
-            return 1
-        if not isinstance(profile, dict):
-            print("infersynth decide: --weights must be a JSON object of dim->weight",
-                  file=sys.stderr)
-            return 1
-    else:
-        profile = args.profile or "production"
+    if args.weights and not isinstance(profile, dict):
+        print("infersynth decide: --weights must be a JSON object of dim->weight", file=sys.stderr)
+        return 1
 
     try:
         catalog = Catalog.load(args.catalog)
-        reqset, _diags = lint_path(args.frd, catalog_dir=args.catalog)
+        reqset, _diags = lint_path(frd, catalog_dir=args.catalog)
         lockfile = load_lockfile(args.lockfile) if args.lockfile else None
-        match_result = match(reqset, catalog)
+        match_result = match(
+            reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints
+        )
         decision = decide(match_result, catalog, profile, lockfile=lockfile)
     except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
         print(f"infersynth decide: {exc}", file=sys.stderr)
@@ -290,7 +318,7 @@ def _cmd_lsp(args: argparse.Namespace) -> int:
     from infersynth.lsp import run
 
     try:
-        run(catalog_dir=args.catalog)
+        run(catalog_dir=args.catalog, spec_path=args.spec)
     except ImportError as exc:
         print(
             f"infersynth lsp: missing lsp extra dependencies ({exc}); "
@@ -378,7 +406,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_decide = sub.add_parser(
         "decide", help="run lint -> match -> decide; pick winning covers (WP-D1)"
     )
-    p_decide.add_argument("--frd", required=True, metavar="F.md", help="path to the FRD")
+    p_decide.add_argument(
+        "--frd", metavar="F.md", help="path to the FRD (default: --spec's frd:; overrides it)"
+    )
+    p_decide.add_argument(
+        "--spec",
+        metavar="spec.yaml",
+        help="formal spec (WP-L1): allocations/profile/endpoints/knobs, and a default --frd",
+    )
     p_decide.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
     p_decide.add_argument(
         "--profile", metavar="P", help="named weight profile (prototype|production|hobbyist)"
@@ -394,7 +429,14 @@ def build_parser() -> argparse.ArgumentParser:
         "synthesize",
         help="full pipeline: lint -> match -> decide -> instantiate winners into a KiCad design",
     )
-    p_syn.add_argument("--frd", required=True, metavar="F.md", help="path to the FRD")
+    p_syn.add_argument(
+        "--frd", metavar="F.md", help="path to the FRD (default: --spec's frd:; overrides it)"
+    )
+    p_syn.add_argument(
+        "--spec",
+        metavar="spec.yaml",
+        help="formal spec (WP-L1): allocations/profile/endpoints/knobs, and a default --frd",
+    )
     p_syn.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
     p_syn.add_argument("--out", required=True, metavar="DIR", help="design output directory")
     p_syn.add_argument("--name", metavar="N", help="design name (default: FRD stem)")
@@ -452,6 +494,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DIR",
         help="catalog directory for vocabulary features (grammar-only lint when omitted)",
+    )
+    p_lsp.add_argument(
+        "--spec",
+        default=None,
+        metavar="spec.yaml",
+        help="formal spec (WP-L1): enables the 'Allocate subtree to library' code action",
     )
     p_lsp.set_defaults(func=_cmd_lsp)
 

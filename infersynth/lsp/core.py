@@ -13,20 +13,30 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 from infersynth.lint import Diagnostic, RequirementSet, Severity, lint_text
+from infersynth.lint.model import Requirement
 from infersynth.lint.vocab import Vocabulary
+from infersynth.match.allocation import NONE_LIBRARY
 
 __all__ = [
     "CompletionItem",
     "Hover",
     "CodeAction",
     "TextInsert",
+    "AllocationCommand",
     "diagnostics_for_text",
     "word_at_position",
     "completion_items",
     "hover_for_word",
     "code_actions_for_diagnostics",
+    "catalog_libraries",
+    "requirement_at_position",
+    "allocation_actions_for_requirement",
+    "apply_allocation",
 ]
 
 
@@ -252,3 +262,131 @@ def code_actions_for_diagnostics(
         elif diag.code == "frd.no-primitive":
             actions.extend(_no_primitive_action(diag))
     return actions
+
+
+# --- allocation code action (WP-L1; SELECTION.md §2) -----------------------
+#
+# Allocation lives in the formal spec, never in FRD prose (SELECTION §2), so
+# unlike the actions above this one's edit does not touch the FRD buffer at
+# all — it targets a *different* file, the workspace's ``spec.yaml``. LSP
+# code actions are shaped around edits to the document the request was made
+# on, so this is deliberately a *command*-shaped action
+# (``infersynth.allocateSubtree``) rather than a ``workspace/applyEdit`` built
+# here: ``server.py`` decides, at invocation time, whether the spec file is
+# currently an open document (send ``workspace/applyEdit``) or not (write it
+# to disk directly) — see that module's docstring for the choice. Everything
+# that can be pure lives here: which requirement the cursor resolved to,
+# which libraries to offer, and the actual YAML edit.
+
+
+@dataclass(frozen=True)
+class AllocationCommand:
+    """One 'Allocate subtree to library: <library>' action.
+
+    Not a :class:`CodeAction` (whose edits are always same-document
+    ``TextInsert``s) because this action's edit targets the spec file, a
+    document distinct from the one the code-action request was made on.
+    ``server.py`` turns this into an LSP ``CodeAction`` whose ``command`` is
+    ``infersynth.allocateSubtree`` with ``arguments=[spec_path, req_id,
+    library]``.
+    """
+
+    title: str
+    req_id: str
+    library: str
+    spec_path: str
+
+
+def catalog_libraries(catalog: Any) -> tuple[str, ...]:
+    """Sorted library names present in *catalog* (mirrors
+    ``infersynth.match.matcher._catalog_libraries``; kept as a small local
+    copy rather than importing a private helper). A cell loaded outside any
+    ``library.yaml`` counts as :data:`infersynth.match.allocation.NONE_LIBRARY`."""
+    libs = {(cell.library if cell.library else NONE_LIBRARY) for cell in catalog.cells.values()}
+    return tuple(sorted(libs))
+
+
+def requirement_at_position(reqset: RequirementSet, line: int) -> Requirement | None:
+    """The lintable, explicit-id requirement whose source span covers *line*
+    (zero-based), or ``None``. Requirements with a generated ``R-<n>`` id
+    (no explicit id in the FRD) never resolve here — SELECTION §2's
+    allocation ``at:`` key names a requirement id the author actually wrote,
+    not a synthesized one the matcher assigned."""
+    for req in reqset.requirements():
+        if not req.explicit_id or req.source is None:
+            continue
+        if req.source.line <= line <= req.source.end_line:
+            return req
+    return None
+
+
+def allocation_actions_for_requirement(
+    req: Requirement | None, libraries: tuple[str, ...], spec_path: str
+) -> list[AllocationCommand]:
+    """One 'Allocate subtree to library: <library>' action per catalog
+    library, for *req* (SELECTION §2: "applied interactively — an LSP code
+    action... during lint writes it into the spec"). Empty when there is no
+    requirement at the cursor, it has no explicit id, or the catalog has no
+    libraries."""
+    if req is None or not req.explicit_id:
+        return []
+    return [
+        AllocationCommand(
+            title=f"Allocate subtree to library: {library}",
+            req_id=req.id,
+            library=library,
+            spec_path=spec_path,
+        )
+        for library in libraries
+    ]
+
+
+def apply_allocation(spec_text: str, req_id: str, library: str) -> str:
+    """Pure spec-text edit for the allocation code action (WP-L1).
+
+    Parses *spec_text* as YAML (empty/whitespace-only text is treated as an
+    empty mapping — this is how a fresh ``spec.yaml`` gets created), appends
+    *library* to the ``allow`` list of the ``allocations:`` entry whose
+    ``at`` equals *req_id*, creating that entry (``{at, allow: [library],
+    deny: []}``) if none exists yet.
+
+    Convention chosen where WP-L1's brief is silent ("idempotence on
+    duplicate ``at`` = merge or error per ``allocations_from_spec``'s
+    duplicate rule — pick and document"): **merge**, not error.
+    ``allocations_from_spec`` rejects two separate list entries sharing an
+    ``at`` (SELECTION §2 gives one requirement one allocation), so this
+    function never produces a second entry for the same requirement — it
+    extends the existing one's ``allow`` list (deduplicated) instead. Running
+    the same action twice for the same ``(req_id, library)`` is therefore a
+    no-op after the first application (true idempotence), and repeated
+    invocations for *different* libraries on the same requirement accumulate
+    into one entry rather than erroring.
+
+    Round-trips through ``yaml.safe_load``/``yaml.safe_dump`` — comments and
+    key ordering in a hand-edited spec file are not preserved. Documented
+    v0 limitation; a format-preserving editor (e.g. ``ruamel.yaml``) is a
+    drop-in upgrade later if that turns out to matter.
+    """
+    if spec_text.strip():
+        data = yaml.safe_load(spec_text)
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError("spec.yaml must be a mapping")
+    else:
+        data = {}
+
+    allocations = list(data.get("allocations") or [])
+    for entry in allocations:
+        if isinstance(entry, dict) and entry.get("at") == req_id:
+            allow = list(entry.get("allow") or [])
+            if library not in allow:
+                allow.append(library)
+            entry["allow"] = allow
+            entry.setdefault("deny", [])
+            break
+    else:
+        allocations.append({"at": req_id, "allow": [library], "deny": []})
+
+    data["allocations"] = allocations
+    return yaml.safe_dump(data, sort_keys=False)

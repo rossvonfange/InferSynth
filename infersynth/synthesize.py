@@ -36,6 +36,9 @@ from infersynth.decide.profiles import WeightProfile, load_profile
 from infersynth.gates.harness import HarnessError, harness_params
 from infersynth.lint import lint_path
 from infersynth.match import MatchResult, match
+from infersynth.match.allocation import AllocationTable
+from infersynth.match.knobs import MatchKnobs
+from infersynth.match.propagate import EndpointSpec
 
 
 @dataclass(frozen=True)
@@ -120,15 +123,25 @@ def synthesize(
     name: str | None = None,
     lockfile: Lockfile | None = None,
     write_trace: bool = True,
+    allocations: AllocationTable | None = None,
+    knobs: MatchKnobs | None = None,
+    endpoints: dict[str, EndpointSpec] | None = None,
 ) -> SynthesisResult:
-    """Run the full pipeline and materialize the decision as a KiCad design."""
+    """Run the full pipeline and materialize the decision as a KiCad design.
+
+    ``allocations``/``knobs``/``endpoints`` (WP-L1) thread straight into
+    :func:`infersynth.match.match` — typically built from a formal spec via
+    :func:`infersynth.spec.load_spec`; ``None`` for any of them keeps
+    ``match``'s own defaults (no allocation scoping, lenient/strict-idiom
+    knobs, trivial single-cell chains).
+    """
     frd = Path(frd)
     out_dir = Path(out_dir)
     catalog = Catalog.load(catalog_dir)
     prof = load_profile(profile)
 
     reqset, _lint_diags = lint_path(frd, catalog_dir=catalog_dir)
-    mres = match(reqset, catalog)
+    mres = match(reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints)
     decision = decide(mres, catalog, prof, lockfile=lockfile)
 
     design_name = name or _sanitize_instname(frd.stem)

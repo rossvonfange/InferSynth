@@ -84,16 +84,55 @@ def _to_lsp_code_action(uri: str, action: core.CodeAction) -> types.CodeAction:
     )
 
 
-def create_server(catalog_dir: str | Path | None = None) -> LanguageServer:
+_ALLOCATE_COMMAND = "infersynth.allocateSubtree"
+
+
+def _to_lsp_allocation_action(action: core.AllocationCommand) -> types.CodeAction:
+    """An :class:`~infersynth.lsp.core.AllocationCommand` as a *command*-shaped
+    ``CodeAction`` (see ``core.py``'s "allocation code action" docstring for
+    why this isn't a same-document ``workspace/applyEdit`` like the others)."""
+    return types.CodeAction(
+        title=action.title,
+        kind=types.CodeActionKind.QuickFix,
+        command=types.Command(
+            title=action.title,
+            command=_ALLOCATE_COMMAND,
+            arguments=[action.spec_path, action.req_id, action.library],
+        ),
+    )
+
+
+def _whole_document_range(text: str) -> types.Range:
+    lines = text.splitlines()
+    last = max(len(lines) - 1, 0)
+    last_len = len(lines[-1]) if lines else 0
+    return types.Range(start=types.Position(0, 0), end=types.Position(last, last_len))
+
+
+def create_server(
+    catalog_dir: str | Path | None = None, spec_path: str | Path | None = None
+) -> LanguageServer:
     """Build the pygls server. *catalog_dir* enables catalog-vocabulary
     diagnostics, completions, hover, and disambiguation code actions;
-    without it the server still runs (EARS-grammar diagnostics only)."""
+    without it the server still runs (EARS-grammar diagnostics only).
+
+    *spec_path* (WP-L1) enables the "Allocate subtree to library" code
+    action: one per catalog library, on any requirement with an explicit id
+    at the cursor. Requires *catalog_dir* too (the action's libraries come
+    from the catalog the server was started with); without *spec_path* the
+    action is absent.
+    """
     server = LanguageServer("infersynth-lsp", "v1")
     vocab: Vocabulary | None = None
+    libraries: tuple[str, ...] = ()
     if catalog_dir is not None:
         from infersynth.catalog import Catalog
 
-        vocab = Vocabulary.from_catalog(Catalog.load(catalog_dir))
+        catalog = Catalog.load(catalog_dir)
+        vocab = Vocabulary.from_catalog(catalog)
+        libraries = core.catalog_libraries(catalog)
+
+    spec_path_str = str(spec_path) if spec_path is not None else None
 
     def _publish(ls: LanguageServer, uri: str, text: str) -> None:
         _, diagnostics = core.diagnostics_for_text(text, uri, catalog_dir)
@@ -133,13 +172,61 @@ def create_server(catalog_dir: str | Path | None = None) -> LanguageServer:
     ) -> list[types.CodeAction]:
         doc = ls.workspace.get_text_document(params.text_document.uri)
         uri = params.text_document.uri
-        _, diagnostics = core.diagnostics_for_text(doc.source, uri, catalog_dir)
+        reqset, diagnostics = core.diagnostics_for_text(doc.source, uri, catalog_dir)
         actions = core.code_actions_for_diagnostics(diagnostics, vocab)
-        return [_to_lsp_code_action(params.text_document.uri, a) for a in actions]
+        lsp_actions = [_to_lsp_code_action(uri, a) for a in actions]
+
+        if spec_path_str is not None and libraries:
+            req = core.requirement_at_position(reqset, params.range.start.line)
+            alloc_actions = core.allocation_actions_for_requirement(
+                req, libraries, spec_path_str
+            )
+            lsp_actions += [_to_lsp_allocation_action(a) for a in alloc_actions]
+
+        return lsp_actions
+
+    @server.command(_ALLOCATE_COMMAND)
+    def allocate_subtree(ls: LanguageServer, args: list) -> None:
+        """Handler for the "Allocate subtree to library" code action.
+
+        Pragmatic v0 choice (documented per the WP-L1 brief): if the spec
+        file is currently an open document in this session, send a
+        ``workspace/applyEdit`` (so the client's own undo stack / dirty-file
+        UI applies, same as any other editor edit); otherwise write the file
+        to disk directly (there is no open buffer to edit through the
+        protocol, and the spec is not the document the request came from).
+        """
+        spec_file, req_id, library = args
+        spec_uri = Path(spec_file).resolve().as_uri()
+        # ``ls.workspace`` raises before ``initialize`` has run (no live
+        # client in a unit test / a server just started with no session
+        # yet) — that is "not open", same as any other unopened document.
+        try:
+            is_open = spec_uri in ls.workspace.text_documents
+        except RuntimeError:
+            is_open = False
+        if is_open:
+            doc = ls.workspace.get_text_document(spec_uri)
+            new_text = core.apply_allocation(doc.source, req_id, library)
+            edit = types.WorkspaceEdit(
+                changes={
+                    spec_uri: [
+                        types.TextEdit(
+                            range=_whole_document_range(doc.source), new_text=new_text
+                        )
+                    ]
+                }
+            )
+            ls.apply_edit(edit, label="Allocate subtree to library")
+        else:
+            path = Path(spec_file)
+            current = path.read_text(encoding="utf-8") if path.exists() else ""
+            new_text = core.apply_allocation(current, req_id, library)
+            path.write_text(new_text, encoding="utf-8")
 
     return server
 
 
-def run_stdio(catalog_dir: str | Path | None = None) -> None:
+def run_stdio(catalog_dir: str | Path | None = None, spec_path: str | Path | None = None) -> None:
     """Run the server over stdio (the ``infersynth lsp`` CLI transport)."""
-    create_server(catalog_dir).start_io()
+    create_server(catalog_dir, spec_path).start_io()
