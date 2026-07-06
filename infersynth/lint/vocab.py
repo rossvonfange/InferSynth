@@ -25,13 +25,21 @@ __all__ = ["Vocabulary", "VocabEntry", "Quantity", "Resolution", "extract_quanti
 
 @dataclass(frozen=True)
 class VocabEntry:
-    """One cell's contribution to the FRD language."""
+    """One cell's contribution to the FRD language.
+
+    ``description`` and ``depth_level`` mirror the cell's manifest/depth
+    sections — carried here (rather than re-read from the catalog) so
+    surfaces like the LSP hover (BUILD_PLAN WP6) can render a full cell
+    summary from the vocabulary alone.
+    """
 
     cell_key: str  # name@version
     cell_name: str
     keywords: tuple[str, ...]
     params: dict[str, dict[str, Any]]  # name -> schema (type/range/allowed/default)
     disambiguation: str | None
+    description: str = ""
+    depth_level: str = "L0"
 
 
 @dataclass
@@ -54,6 +62,8 @@ class Vocabulary:
                     disambiguation=(
                         str(cell.disambiguation) if cell.disambiguation else None
                     ),
+                    description=str(cell.manifest.get("description", "")),
+                    depth_level=str(cell.depth.get("level", "L0")),
                 )
             )
         return cls(entries)
