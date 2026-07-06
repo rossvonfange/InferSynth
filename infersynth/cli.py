@@ -94,6 +94,18 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
         return 2
 
     asyncio.run(run_stdio(catalog_dir=args.catalog))
+def _cmd_lsp(args: argparse.Namespace) -> int:
+    from infersynth.lsp import run
+
+    try:
+        run(catalog_dir=args.catalog)
+    except ImportError as exc:
+        print(
+            f"infersynth lsp: missing lsp extra dependencies ({exc}); "
+            "install with `pip install infersynth[lsp]`",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 
@@ -149,6 +161,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--catalog", default=None, metavar="DIR", help="default catalog dir for catalog-aware tools"
     )
     p_mcp.set_defaults(func=_cmd_mcp)
+    p_lsp = sub.add_parser(
+        "lsp", help="run the language server over stdio (squiggles, completions, hover)"
+    )
+    p_lsp.add_argument(
+        "--catalog",
+        default=None,
+        metavar="DIR",
+        help="catalog directory for vocabulary features (grammar-only lint when omitted)",
+    )
+    p_lsp.set_defaults(func=_cmd_lsp)
 
     return parser
 

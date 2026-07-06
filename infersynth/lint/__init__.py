@@ -5,7 +5,9 @@ parameters. Two composed layers: EARS grammar (ears.py) and catalog-derived
 semantics (vocab.py). All findings are LSP-shaped diagnostics
 (diagnostics.py) so every surface — CLI, LSP, MCP — is a thin adapter.
 
-Entry points: :func:`lint_requirement_set` (model in, diagnostics out) and
+Entry points: :func:`lint_requirement_set` (model in, diagnostics out),
+:func:`lint_text` (in-memory markdown in, model + diagnostics out — the LSP's
+entry point, since editor buffers are not necessarily saved) and
 :func:`lint_path` (markdown or .reqif file in, model + diagnostics out).
 """
 
@@ -31,6 +33,7 @@ __all__ = [
     "classify",
     "lint_path",
     "lint_requirement_set",
+    "lint_text",
     "parse_frd_markdown",
     "parse_frd_text",
 ]
@@ -142,6 +145,29 @@ def lint_requirement_set(
     return diags
 
 
+def _load_vocab(catalog_dir: str | Path | None) -> Vocabulary | None:
+    if catalog_dir is None:
+        return None
+    from infersynth.catalog import Catalog
+
+    return Vocabulary.from_catalog(Catalog.load(catalog_dir))
+
+
+def lint_text(
+    text: str, file: str = "<frd>", catalog_dir: str | Path | None = None
+) -> tuple[RequirementSet, list[Diagnostic]]:
+    """Lint in-memory FRD markdown *text* (no file need be saved to disk).
+
+    This is the LSP's entry point (UX.md: the language server is a thin
+    adapter over this engine and must not require a saved buffer). Catalog
+    semantics run only when *catalog_dir* is given; grammar-only lint
+    otherwise.
+    """
+    reqset = parse_frd_text(text, file=file)
+    vocab = _load_vocab(catalog_dir)
+    return reqset, lint_requirement_set(reqset, vocab)
+
+
 def lint_path(
     path: str | Path, catalog_dir: str | Path | None = None
 ) -> tuple[RequirementSet, list[Diagnostic]]:
@@ -153,11 +179,6 @@ def lint_path(
         from infersynth.lint.reqif_io import load_reqif
 
         reqset = load_reqif(p)
-    else:
-        reqset = parse_frd_markdown(p)
-    vocab = None
-    if catalog_dir is not None:
-        from infersynth.catalog import Catalog
-
-        vocab = Vocabulary.from_catalog(Catalog.load(catalog_dir))
-    return reqset, lint_requirement_set(reqset, vocab)
+        vocab = _load_vocab(catalog_dir)
+        return reqset, lint_requirement_set(reqset, vocab)
+    return lint_text(p.read_text(encoding="utf-8"), file=str(p), catalog_dir=catalog_dir)
