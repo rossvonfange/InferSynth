@@ -125,6 +125,20 @@ containing:
 | `routes/` *(optional)* — pre-routed critical intra-cell traces (crystal loops, RF feeds, sense lines) | ditto |
 | `manifest.yaml` — identity, version, provenance, license of referenced symbols/footprints | dataset hygiene |
 
+**Storage: join keys in the geometry, knowledge in the catalog** (the footprint
+model — a board stores `Resistor_SMD:R_0603`, not the footprint definition).
+Synthesized designs carry only small native KiCad **properties**: per sheet
+`IS.Cell`, `IS.Version`, `IS.Param.*`; per symbol, port/role tags where needed.
+A design therefore has **zero sidecar files** — self-describing KiCad plus
+references the installed catalog resolves. All knowledge (model, testbench,
+idioms, selection) lives in the cell package. The three metadata files above
+collapse into one `cell.yaml` (sections: manifest, idioms, selection); a
+minimal L0 cell is four artifacts: `cell.yaml`, `fragment.kicad_sch` (parameter
+slots as properties/`${VAR}` text variables — also native), `model`, `tb`.
+Rejected hosts: KiCad's `embedded_files` (bloats, hides from git, buries source
+of truth) and `.kicad_pro` (KiCad rewrites it; unknown keys unsafe). Requires
+custom *sheet* properties via KiCAD-MCP-Server (upstream item N).
+
 **Library depth is graded, not uniform** — the FPGA soft-IP/hard-macro spectrum:
 
 - **L0 — soft:** schematic fragment only. Parts land on the board as a ratsnest.
@@ -222,6 +236,11 @@ FRD ⇄ LLM lint ⇄ human sign-off → formal spec (IR)
 
 The signed-off formal spec is the determinism boundary: from here to schematic,
 no LLM, no randomness.
+
+**Flat FRD, hierarchical spec.** The FRD is flat markdown — numbered
+requirements, one per bullet; headings are optional grouping *hints*, never
+required. Hierarchy lives in the formal spec, where machines need it; the lint
+stage derives the tree. Humans write prose lists; the parser owns structure.
 
 ## 7. Verification gates (per synthesized design)
 
