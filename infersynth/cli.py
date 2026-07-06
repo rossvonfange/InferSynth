@@ -80,6 +80,23 @@ def _cmd_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    import asyncio
+
+    try:
+        from infersynth.mcp_server.server import run_stdio
+    except ImportError as exc:
+        print(
+            "infersynth mcp: missing mcp extra dependencies "
+            f"({exc}); install with `pip install infersynth[mcp]`",
+            file=sys.stderr,
+        )
+        return 2
+
+    asyncio.run(run_stdio(catalog_dir=args.catalog))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="infersynth",
@@ -124,6 +141,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_panel.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
     p_panel.add_argument("--port", type=int, default=8765, help="bind port (default: 8765)")
     p_panel.set_defaults(func=_cmd_panel)
+
+    p_mcp = sub.add_parser(
+        "mcp", help="run the infersynth-mcp stdio server (thin adapter over the library)"
+    )
+    p_mcp.add_argument(
+        "--catalog", default=None, metavar="DIR", help="default catalog dir for catalog-aware tools"
+    )
+    p_mcp.set_defaults(func=_cmd_mcp)
 
     return parser
 

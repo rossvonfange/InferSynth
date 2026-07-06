@@ -26,6 +26,9 @@ panel = [
 reqif = [
     "reqif>=0.0.40",
 ]
+mcp = [
+    "mcp>=1.0",
+]
 
 [project.scripts]
 infersynth = "infersynth.cli:main"

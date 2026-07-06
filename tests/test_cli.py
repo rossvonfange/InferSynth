@@ -31,3 +31,25 @@ def test_version():
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
+
+
+def test_mcp_subcommand_parses(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["mcp", "--help"])
+    assert exc.value.code == 0
+    assert "--catalog" in capsys.readouterr().out
+
+
+def test_mcp_missing_extra_prints_hint(monkeypatch, capsys):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "infersynth.mcp_server.server" or name.startswith("mcp"):
+            raise ImportError("no module named 'mcp'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert main(["mcp"]) == 2
+    assert "infersynth[mcp]" in capsys.readouterr().err
