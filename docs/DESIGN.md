@@ -45,10 +45,19 @@ Structural correspondences that fall out of the analogy:
 - **A KiCad hierarchical sheet is an instantiated primitive.** Each catalog block
   synthesizes to one sheet (or a fragment of one). Connector/interface sheets play
   the role of IOBs.
-- **The power tree is the clock tree.** One driver per net, controlled
-  distribution, integrity rules. The PWR_FLAG discipline (exactly one flag per
-  rail, on its originating sheet; regulator `power_out` pins need none) is clock-
-  buffer legality checking.
+- **Power is modeled with primitives, not by analogy.** Where digital flows bolt
+  power intent on as a sidecar (UPF/IEEE 1801), SystemC-AMS ELN models are
+  electrical networks — rails, regulators, and loads are ordinary nodes and
+  elements. So power blocks are first-class *synthesizable* catalog primitives
+  that simulate natively, and rail-integrity rules (exactly one driver per power
+  net; the PWR_FLAG discipline: one flag per rail on its originating sheet,
+  regulator `power_out` pins need none) are checked as primitive legality, the
+  way clock-buffer rules are in an FPGA.
+- **Clock domains stay clocks.** The IR carries clock/timing domains as a
+  first-class annotation on nets and blocks (oscillators, RF chains, differential
+  pairs, matched groups). In v1 they gate lint and simulation; later they are
+  what *emits* layout constraints — netclasses, diff-pair rules, matched-length
+  groups — exactly as timing constraints drive an FPGA's P&R.
 - **Silent mis-inference is the failure mode to design against.** The FPGA
   equivalent of "meant BRAM, got LUTRAM" is "meant isolated CAN, got a bare
   transceiver." FPGA tools only reveal this in a synthesis report after the fact;
@@ -112,7 +121,24 @@ containing:
 | `idioms.yaml` — vocabulary this block contributes to the FRD language | keywords, parameters, ranges, ambiguity rules (§6) |
 | `selection.yaml` — matching + binding metadata | electrical ratings, qualification (e.g. AEC-Q100), package/footprint, cost/sourcing hooks, scoring attributes |
 | `testbench/` — stimulus + expected results | the entry's own acceptance test and its contribution to the benchmark corpus |
+| `floorplan/` *(optional)* — relative placement of the block's parts on the PCB | hard-IP-style layout knowledge (see depth tiers below) |
+| `routes/` *(optional)* — pre-routed critical intra-block traces (crystal loops, RF feeds, sense lines) | ditto |
 | `manifest.yaml` — identity, version, provenance, license of referenced symbols/footprints | dataset hygiene |
+
+**Library depth is graded, not uniform** — the FPGA soft-IP/hard-macro spectrum:
+
+- **L0 — soft:** schematic fragment only. Parts land on the board as a ratsnest.
+- **L1 — floorplanned:** L0 + relative placement of the block's own parts
+  (cluster geometry, courtyard keep-outs).
+- **L2 — hard-routed:** L1 + pre-routed traces for the block's *internal*
+  critical nets.
+
+Depth is per-entry and optional; a catalog is useful with nothing but L0
+entries. Crucially, **inter-block interconnect is always the user's job** —
+InferSynth never routes between blocks, even where it could. An "Arduino
+Uno-class MCU" primitive may arrive with its crystal floorplan-placed and its
+oscillator loop pre-routed (L2 internally), while every connection *to other
+blocks* remains an unrouted ratsnest by design.
 
 **Entry gates (CI, identical for all authors):**
 1. Behavioral model simulates against its testbench and passes.
@@ -219,14 +245,20 @@ Four deliverables in one repo:
   diagnostics; catalog factory v1.
 - **v3 (intake):** LLM FRD lint front-end + sign-off workflow; community
   submission pipeline; MCP server + skill polish.
-- **Later:** PCB place & route (riding `hierarchical_place` + freerouting),
-  SI/power-budget closure gates.
+- **Later (layout):** floorplan-driven placement of block clusters (riding
+  `hierarchical_place`), instantiation of L1/L2 floorplans and pre-routed
+  intra-block traces, constraint emission from clock domains (netclasses,
+  diff pairs, matched groups), SI/power-budget closure gates. Inter-block
+  routing remains the user's, always.
 
 ## 11. Non-goals
 
 - No LLM-decided part selection, topology, or connectivity — ever (principle 1).
 - No free-form "AI draws a schematic" mode.
-- v1 does not attempt PCB layout, autorouting, or mechanical.
+- **No inter-block routing, ever** — not a v1 deferral but a design boundary.
+  Catalog entries may carry floorplans and pre-routed *internal* traces (§5
+  depth tiers); connecting blocks to each other is the user's craft.
+- v1 does not attempt PCB layout or mechanical.
 - No proprietary designs in catalog, examples, or benchmarks; the corpus is
   built from public reference designs and synthetic compositions.
 
