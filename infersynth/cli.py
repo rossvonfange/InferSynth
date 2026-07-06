@@ -89,6 +89,77 @@ def _cmd_catalog_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_decide(args: argparse.Namespace) -> int:
+    import json
+
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.decide import build_trace, decide, render_text
+    from infersynth.decide import write as write_trace
+    from infersynth.decide.lockfile import load as load_lockfile
+    from infersynth.lint import lint_path
+    from infersynth.lint.reqif_io import ReqIFImportError
+    from infersynth.match import match
+
+    if args.profile and args.weights:
+        print("infersynth decide: --profile and --weights are mutually exclusive", file=sys.stderr)
+        return 2
+    profile: str | dict
+    if args.weights:
+        try:
+            profile = json.loads(args.weights)
+        except json.JSONDecodeError as exc:
+            print(f"infersynth decide: --weights is not valid JSON: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(profile, dict):
+            print("infersynth decide: --weights must be a JSON object of dim->weight",
+                  file=sys.stderr)
+            return 1
+    else:
+        profile = args.profile or "production"
+
+    try:
+        catalog = Catalog.load(args.catalog)
+        reqset, _diags = lint_path(args.frd, catalog_dir=args.catalog)
+        lockfile = load_lockfile(args.lockfile) if args.lockfile else None
+        match_result = match(reqset, catalog)
+        decision = decide(match_result, catalog, profile, lockfile=lockfile)
+    except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
+        print(f"infersynth decide: {exc}", file=sys.stderr)
+        return 1
+
+    trace = build_trace(match_result, catalog, decision)
+    print(render_text(trace))
+    if args.trace:
+        write_trace(trace, args.trace)
+        print(f"wrote {args.trace}", file=sys.stderr)
+
+    undecided = decision.undecided()
+    if undecided:
+        print("", file=sys.stderr)
+        for rr in decision.resolution_requests:
+            print(f"ResolutionRequest: {rr.diagnostic.message}", file=sys.stderr)
+        for rid, status in undecided.items():
+            print(f"undecided [{rid}]: {status}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def _cmd_costs_lock(args: argparse.Namespace) -> int:
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.decide.lockfile import write as write_lockfile
+
+    try:
+        catalog = Catalog.load(args.catalog)
+        lock = write_lockfile(
+            catalog, args.output, timestamp=args.timestamp, source="cell.yaml"
+        )
+    except (OSError, CatalogError, ValueError) as exc:
+        print(f"infersynth costs lock: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {args.output}: {len(lock.entries)} priced cell(s) @ {lock.generated_at}")
+    return 0
+
+
 def _cmd_panel(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -183,6 +254,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_val = cat_sub.add_parser("validate", help="validate a catalog directory")
     p_val.add_argument("catalog_dir", help="directory of cell packages")
     p_val.set_defaults(func=_cmd_catalog_validate)
+
+    p_decide = sub.add_parser(
+        "decide", help="run lint -> match -> decide; pick winning covers (WP-D1)"
+    )
+    p_decide.add_argument("--frd", required=True, metavar="F.md", help="path to the FRD")
+    p_decide.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_decide.add_argument(
+        "--profile", metavar="P", help="named weight profile (prototype|production|hobbyist)"
+    )
+    p_decide.add_argument(
+        "--weights", metavar="JSON", help='inline weights, e.g. \'{"bom": 8, "area_mm2": 5}\''
+    )
+    p_decide.add_argument("--lockfile", metavar="F", help="costs.lock.json to override cell costs")
+    p_decide.add_argument("--trace", metavar="OUT.json", help="write selection_trace.json to OUT")
+    p_decide.set_defaults(func=_cmd_decide)
+
+    p_costs = sub.add_parser("costs", help="cost lockfile operations")
+    costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)
+    p_lock = costs_sub.add_parser(
+        "lock", help="snapshot current cell.yaml costs into a costs.lock.json"
+    )
+    p_lock.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_lock.add_argument(
+        "--output", "-o", default="costs.lock.json", metavar="F", help="lockfile path to write"
+    )
+    p_lock.add_argument(
+        "--timestamp", metavar="ISO8601", help="generated_at value (default: now, at lock time)"
+    )
+    p_lock.set_defaults(func=_cmd_costs_lock)
 
     p_panel = sub.add_parser(
         "panel", help="run the sidecar web panel (read-mostly catalog + gate viewer)"
