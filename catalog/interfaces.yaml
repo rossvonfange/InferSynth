@@ -1,0 +1,57 @@
+# Interface (bundle) definitions (NETFLOW.md "Interfaces (bundles)"). Each
+# entry standardizes a wiring-level bundle once — protocol variance rides on
+# top of it (uart mates with uart regardless of baud; CAN FD vs classic CAN
+# is a decide-stage parameter-compatibility diagnostic, not a wiring concern).
+# Versioned with the catalog; cells group ports via `interfaces:` in
+# cell.yaml, validated against this file. Roles/directions (`dir`) are always
+# stated from the INITIATOR's perspective — the complementary (peripheral)
+# side's direction is the mirror image, computed once here rather than
+# re-derived at match time (see infersynth/catalog/interfaces.py `mates()`).
+version: 1
+interfaces:
+  uart:
+    description: Asynchronous point-to-point serial (cross-connected TX/RX).
+    roles:
+      TX: {dir: out}
+      RX: {dir: in}
+
+  spi:
+    description: Synchronous serial bus, single controller (initiator) + one
+      or more peripherals selected by CS.
+    roles:
+      SCLK: {dir: out}
+      MOSI: {dir: out}
+      MISO: {dir: in}
+      CS:   {dir: out, optional_many: true}
+
+  i2c:
+    description: Two-wire multi-drop bus; SDA is shared/bidirectional, SCL is
+      controller-driven.
+    roles:
+      SDA: {dir: bidir}
+      SCL: {dir: out}
+
+  can_phy:
+    description: CAN transceiver differential pair (protocol-agnostic — CAN
+      FD / classic CAN parameter compatibility is a decide-stage concern, not
+      a wiring one).
+    domain: differential
+    roles:
+      CANH: {dir: bidir, kind: diff_p}
+      CANL: {dir: bidir, kind: diff_n}
+
+  diff_pair:
+    description: Generic differential signal pair, protocol-agnostic.
+    domain: differential
+    roles:
+      P: {dir: bidir, kind: diff_p}
+      N: {dir: bidir, kind: diff_n}
+
+  analog:
+    description: Degenerate single-wire interface — a plain analog signal
+      expressed as a 1-role bundle so it can join the same interface-group
+      machinery uniformly as multi-wire buses (see infersynth/catalog/
+      interfaces.py module docstring for the tradeoff this was weighed
+      against).
+    roles:
+      SIG: {dir: bidir}

@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from infersynth.catalog.interfaces import InterfaceDef, InterfacesError, load_interfaces
 from infersynth.catalog.loader import CellPackage, CellPackageError, load_cell
 from infersynth.catalog.taxonomy import TaxonomyError, load_taxonomy
 
@@ -134,6 +135,10 @@ class Catalog:
 
     def __init__(self) -> None:
         self.cells: dict[str, CellPackage] = {}  # key: library/name@version (or bare)
+        #: catalog-wide interfaces.yaml definitions (NETFLOW.md "Interfaces
+        #: (bundles)"), threaded through to every cell the same way taxonomy
+        #: is; empty when the catalog has no interfaces.yaml.
+        self.interfaces: dict[str, InterfaceDef] = {}
 
     @classmethod
     def load(cls, catalog_dir: str | Path, strict: bool = True) -> Catalog:
@@ -162,12 +167,21 @@ class Catalog:
             except TaxonomyError as exc:
                 diags.append(str(exc))
 
+        interfaces_path = root / "interfaces.yaml"
+        interfaces: dict[str, InterfaceDef] | None = None
+        if interfaces_path.is_file():
+            try:
+                interfaces = load_interfaces(interfaces_path)
+            except InterfacesError as exc:
+                diags.append(str(exc))
+        catalog.interfaces = interfaces or {}
+
         subdirs = sorted(p for p in root.iterdir() if p.is_dir())
         library_dirs = [p for p in subdirs if _is_library_dir(p)]
 
         def _load_cell_dir(entry: Path, library: str | None, label: str) -> None:
             try:
-                cell = load_cell(entry, strict=strict, taxonomy=taxonomy)
+                cell = load_cell(entry, strict=strict, taxonomy=taxonomy, interfaces=interfaces)
             except CellPackageError as exc:
                 diags.extend(f"{label}: {d}" for d in exc.diagnostics)
                 return
