@@ -24,6 +24,10 @@ UNITY = CATALOG / "unity-buffer"
 INVERTING = CATALOG / "opamp-gain-inverting"
 VREF = CATALOG / "vref-shunt"
 CLAMP = CATALOG / "output-clamp"
+SUMMING = CATALOG / "summing-offset-stage"
+ADC_RC = CATALOG / "adc-driver-rc"
+BJT_CS = CATALOG / "current-source-bjt"
+PWR_COND = CATALOG / "power-input-conditioning"
 _TAXONOMY = load_taxonomy(CATALOG.parent / "taxonomy.yaml")
 
 
@@ -69,6 +73,31 @@ class TestBehavioralCellGate:
         assert any("linear/amplitude_ratio" in d for d in result.diagnostics)
         assert any("overdrive/clipped_within" in d for d in result.diagnostics)
 
+    def test_summing_offset_stage_passes(self):
+        result = simulation_cell_gate(load_cell(SUMMING))
+        assert result.status == GateStatus.PASS
+        assert any("linear/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("linear/inverted" in d for d in result.diagnostics)
+        assert any("overdrive/clipped_within" in d for d in result.diagnostics)
+
+    def test_adc_driver_rc_passes(self):
+        result = simulation_cell_gate(load_cell(ADC_RC))
+        assert result.status == GateStatus.PASS
+        assert any("step_1v/settles_to" in d for d in result.diagnostics)
+        assert any("steady_2v/settles_to" in d for d in result.diagnostics)
+
+    def test_current_source_bjt_passes(self):
+        result = simulation_cell_gate(load_cell(BJT_CS))
+        assert result.status == GateStatus.PASS
+        assert any("on/settles_to" in d for d in result.diagnostics)
+        assert any("off/settles_to" in d for d in result.diagnostics)
+
+    def test_power_input_conditioning_passes(self):
+        result = simulation_cell_gate(load_cell(PWR_COND))
+        assert result.status == GateStatus.PASS
+        assert any("forward/settles_to" in d for d in result.diagnostics)
+        assert any("reverse/settles_to" in d for d in result.diagnostics)
+
     def test_structural_cell_skips_loudly(self):
         result = simulation_cell_gate(load_cell(DECOUPLING))
         assert result.status == GateStatus.SKIPPED
@@ -98,7 +127,9 @@ class TestDeterminism:
         cell = load_cell(X4)
         assert run_cell_simulation(cell) == run_cell_simulation(cell)
 
-    @pytest.mark.parametrize("cell_dir", [UNITY, INVERTING, VREF, CLAMP])
+    @pytest.mark.parametrize(
+        "cell_dir", [UNITY, INVERTING, VREF, CLAMP, SUMMING, ADC_RC, BJT_CS, PWR_COND]
+    )
     def test_new_cells_are_bit_identical(self, cell_dir: Path):
         cell = load_cell(cell_dir)
         assert run_cell_simulation(cell) == run_cell_simulation(cell)
@@ -162,7 +193,10 @@ class TestFailureModes:
         assert any("binder" in d for d in result.diagnostics)
 
 
-@pytest.mark.parametrize("cell_dir", [NONINV, X4, UNITY, INVERTING, VREF, CLAMP])
+@pytest.mark.parametrize(
+    "cell_dir",
+    [NONINV, X4, UNITY, INVERTING, VREF, CLAMP, SUMMING, ADC_RC, BJT_CS, PWR_COND],
+)
 def test_cell_gates_all_pass(cell_dir: Path):
     report = run_cell_gates(cell_dir)
     assert report.ok
