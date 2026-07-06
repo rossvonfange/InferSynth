@@ -1,0 +1,83 @@
+# Three-op-amp instrumentation amplifier — SEED_PLAN.md sec 2 signal-path
+# cell (AoE §5.15-ish). Fragment authored via KiCAD-MCP-Server, same
+# conventions as the golden cells: hierarchical labels coincident with pin
+# endpoints, 1.27mm grid, ${IS.*} value slot, no explicit wires (nets formed
+# by same-named coincident labels).
+#
+# Topology: input stage U1 (+in = INP), U2 (+in = INN); RG (R1) between
+# U1.-in (node G1) and U2.-in (node G2); RF top (R2) from G1 to U1.out (M1);
+# RF bottom (R3) from G2 to U2.out (M2). Diff stage: R4 from M1 to U3.-in
+# (D1); R5 from M2 to U3.+in (D2); R6 from D1 to U3.out (OUT port); R7 from
+# D2 to REF. Classic 3-op-amp in-amp: gain = 1 + 2*Rf/Rg (input stage);
+# diff stage (R4=R5=R6=R7) is unity gain.
+manifest:
+  name: instrumentation-amp-3opamp
+  version: "0.1.0"
+  description: Three-op-amp instrumentation amplifier (gain = 1 + 2*Rf/Rg).
+  provenance: "AoE 3rd ed. §5.15-class topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # Three op-amp ICs define the cell; the resistors are passive support.
+  technology: analog-ic
+
+ports:
+  INP: {direction: in, kind: electrical}
+  INN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  REF: {direction: in, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - instrumentation amplifier
+    - differential amplifier
+  # SELECTION.md sec 3: gain stage is the amplification tag verbatim.
+  functions:
+    - amplification
+  params:
+    gain:
+      type: float
+      range: [2.0, 1000.0]
+    rf_ohms:
+      type: float
+      range: [1.0e+3, 1.0e+5]
+      default: 10000.0
+    r_diff_ohms:
+      type: float
+      range: [1.0e+3, 1.0e+5]
+      default: 10000.0
+
+bindings:
+  # Input-stage gain: gain = 1 + 2*Rf/Rg -> Rg = 2*Rf/(gain-1). Diff stage
+  # (R4-R7) is unity gain, all four resistors equal to r_diff_ohms.
+  R1: "2 * rf_ohms / (gain - 1)"   # RG, ohms
+  R2: "rf_ohms"                    # RF top, ohms
+  R3: "rf_ohms"                    # RF bottom, ohms
+  R4: "r_diff_ohms"                # diff stage input R, ohms
+  R5: "r_diff_ohms"                # diff stage input R, ohms
+  R6: "r_diff_ohms"                # diff stage feedback R, ohms
+  R7: "r_diff_ohms"                # diff stage ground-ref R, ohms
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (3 general-purpose op-amps + 7 resistors at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering).
+costs:
+  bom: {qty1: 3.10, qty1k: 1.15}
+  area_mm2: 140
+  power_mw: 15
+  part_count: 10
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

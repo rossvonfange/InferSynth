@@ -232,6 +232,10 @@ class TestSchemaV1GoldenCells:
             "core/sallen-key-lowpass-2@0.1.0",
             "core/mfb-lowpass-2@0.1.0",
             "core/linear-reg-fixed@0.1.0",
+            "core/instrumentation-amp-3opamp@0.1.0",
+            "core/bridge-interface@0.1.0",
+            "core/rail-splitter-virtual-gnd@0.1.0",
+            "core/input-protection-rfi@0.1.0",
         }
         assert all(c.library == "core" for c in catalog.cells.values())
 

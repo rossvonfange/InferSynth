@@ -1,0 +1,13 @@
+# Golden netlist partition for fragment.kicad_sch (net -> {ref/pin}), captured at authoring
+/D1: R4/2, R6/1, U3/4
+/D2: R5/2, R7/1, U3/3
+/G1: R1/1, R2/1, U1/4
+/G2: R1/2, R3/1, U2/4
+/INN: U2/3
+/INP: U1/3
+/M1: R2/2, R4/1, U1/1
+/M2: R3/2, R5/1, U2/1
+/OUT: R6/2, U3/1
+/REF: R7/2
+/VCC: U1/5, U2/5, U3/5
+/VEE: U1/2, U2/2, U3/2
