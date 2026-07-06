@@ -221,6 +221,10 @@ class TestSchemaV1GoldenCells:
             "core/conn-power-2pin@0.1.0",
             "core/conn-output-header@0.1.0",
             "core/decoupling@0.1.0",
+            "core/unity-buffer@0.1.0",
+            "core/opamp-gain-inverting@0.1.0",
+            "core/vref-shunt@0.1.0",
+            "core/output-clamp@0.1.0",
         }
         assert all(c.library == "core" for c in catalog.cells.values())
 

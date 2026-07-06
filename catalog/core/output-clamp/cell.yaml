@@ -1,0 +1,69 @@
+# Output overvoltage/undervoltage diode clamp — SEED_PLAN.md sec 2
+# precision-and-protection cell. Fragment authored via KiCAD-MCP-Server, same
+# conventions as the golden cells: hierarchical labels coincident with pin
+# endpoints, 1.27mm grid, ${IS.*} value slot.
+#
+# Topology: a series resistor (R1) between IN and the clamped SIG node; the
+# SIG node *is* the OUT port (no separate internal node name — the port and
+# the clamp point coincide, so IN and OUT are simply the hierarchical labels
+# on either side of R1). Two Schottky diodes clamp that node: D1 anode on
+# SIG/OUT, cathode to VCC (conducts when OUT tries to swing above VCC +
+# Vf); D2 cathode on SIG/OUT, anode to GND (conducts when OUT tries to swing
+# below GND - Vf). BAT54-class Schottky archetype (Device:D_Schottky; low Vf,
+# fast, appropriate for signal-line clamping vs a general-purpose diode).
+manifest:
+  name: output-clamp
+  version: "0.1.0"
+  description: Series-R + dual-Schottky overvoltage/undervoltage clamp on a signal line.
+  provenance: "AoE 3rd ed. ch. 1/4 diode clamp topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # Discrete diodes + a resistor, no active silicon/IC -> analog-discrete
+  # (contrast with the op-amp cells above, which are analog-ic).
+  technology: analog-discrete
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - output clamp
+    - overvoltage clamp
+  # SELECTION.md sec 3: clamps are the protection tag verbatim ("clamps,
+  # fusing, reverse polarity, ESD").
+  functions:
+    - protection
+  params:
+    r_series_ohms:
+      type: float
+      range: [0.0, 10000.0]
+      default: 100.0
+
+bindings:
+  R1: "r_series_ohms"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:D_Schottky
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (2 small-signal Schottky diodes + 1 series resistor
+# at typical distributor pricing), not a sourced real BOM; dev_hours is 0
+# (no firmware/config engineering).
+costs:
+  bom: {qty1: 0.20, qty1k: 0.06}
+  area_mm2: 12
+  power_mw: 0
+  part_count: 3
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

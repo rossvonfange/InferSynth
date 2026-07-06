@@ -1,0 +1,88 @@
+# Inverting op-amp gain stage — SEED_PLAN.md sec 2 signal-path cell.
+# Fragment authored via KiCAD-MCP-Server, same conventions as the golden
+# cells: hierarchical labels coincident with pin endpoints, 1.27mm grid,
+# ${IS.<name>} value slots. Layout mirrors opamp-gain-noninverting's R1/R2
+# placement exactly (R1 = feedback resistor OUT<->FB, R2 = the other
+# gain-setting resistor); only the *role* of R2's far pin changes (signal
+# input here, ground reference there), and the non-inverting input is tied
+# to an explicit REF port rather than left as the signal input — see
+# manifest note below.
+manifest:
+  name: opamp-gain-inverting
+  version: "0.1.0"
+  description: Inverting op-amp gain stage (gain = -Rf/Rin), non-inverting input tied to an analog reference.
+  provenance: "AoE 3rd ed. ch. 4 topology (reference only; re-expressed from scratch)"
+  license: GPL-3.0-or-later
+  technology: analog-ic
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  # Non-inverting input reference. Named REF rather than GND: this stage is
+  # meant to work single-supply, where the non-inverting input is biased to
+  # a mid-rail (or other) analog reference, not literal ground. Calling it
+  # GND would silently imply a split-supply/ground-referenced assumption this
+  # cell does not make.
+  REF: {direction: in, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - inverting amplifier
+    - amplifier gain stage
+  # SELECTION.md sec 3: gain stage is the amplification tag verbatim, same
+  # as the non-inverting cell.
+  functions:
+    - amplification
+  params:
+    gain:
+      type: float
+      range: [0.1, 1000.0]
+    rin_ohms:
+      type: float
+      range: [1000.0, 1000000.0]
+      default: 10000.0
+  # catalog.py gate 4: this cell's "amplifier gain stage" keyword is shared
+  # verbatim with opamp-gain-noninverting and opamp-gain-x4-noninverting, and
+  # "inverting amplifier" substring-collides with "non-inverting amplifier"
+  # in the FRD vocabulary resolver (lint/vocab.py: substring keyword match).
+  # Declaring disambiguation here waives the collision on this cell's side
+  # (catalog.py: "if a.disambiguation or b.disambiguation: continue").
+  disambiguation: >
+    Collides with opamp-gain-noninverting (and its quad variant) on the
+    shared "amplifier gain stage" keyword and, via substring matching in the
+    FRD vocabulary resolver, on "inverting amplifier" against "non-inverting
+    amplifier". Resolve on explicit topology: a requirement is inferred as
+    this (inverting) cell only when it says "inverting" or asks for a
+    phase-inverted / sign-inverted output; non-inverting is the default
+    winner for an unqualified "amplifier gain stage" / gain requirement.
+
+bindings:
+  R1: "gain * rin_ohms"   # feedback resistor, ohms
+  R2: "rin_ohms"          # input resistor, ohms
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (general-purpose op-amp + 2 resistors at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering).
+costs:
+  bom: {qty1: 0.90, qty1k: 0.35}
+  area_mm2: 40
+  power_mw: 5
+  part_count: 3
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
