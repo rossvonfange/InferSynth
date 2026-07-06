@@ -169,6 +169,29 @@ candidate. **Community submissions** are PRs run through the same CI. The factor
 also assists submitters: reviews a draft entry, points at the failing gate,
 proposes fixes.
 
+### 5.1 Prior art and source corpora
+
+Three external block ecosystems, each with a distinct role here:
+
+- **Zener / diodeinc** ([diodeinc/kicad](https://github.com/diodeinc/kicad)) —
+  ~50 categories of Starlark-configured modules compiling into KiCad; with
+  **atopile** (`.ato`), the closest prior art to the catalog and commercial
+  validation of parameterized-block→KiCad. The gap is InferSynth's thesis:
+  engineer-configured code, no requirements language/inference, and no
+  verification gate (no behavioral model, no simulation, no model↔fragment
+  equivalence). Study their parameterization when designing `fragment/`;
+  candidate conversion source for L0 entries.
+- **fablabs-kicad-library `block_examples/`**
+  ([SainsburyWellcomeCentre](https://github.com/SainsburyWellcomeCentre/fablabs-kicad-library))
+  — one complete KiCad project (sch+pcb) per block, e.g. RP2354A with crystal/
+  flash/decoupling placed and routed: L1/L2 entries existing in the wild.
+  Validates the depth-tier model; direct donor material for seed entries.
+- **DigiKey reference designs** (and vendor app notes/EVMs generally) —
+  catalog-*factory feedstock*, not catalog content: the corpus entries are
+  drafted *from*. Vendor licensing is often unclear or restrictive; the factory
+  must re-express topologies (never copy artwork) and record provenance in the
+  manifest.
+
 ## 6. The FRD language
 
 The hurdle: users must write requirements that play the role of RTL without
