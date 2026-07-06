@@ -65,7 +65,11 @@ class TestSynthesizeEndToEnd:
         assert root_text.count("IS.Cell") == len(result.instantiated)
         assert result.trace_path is not None and result.trace_path.exists()
         report = result.report_path.read_text(encoding="utf-8")
-        assert "Wiring worklist" in report
+        # NETFLOW stage 1: rails are wired (single-cell winners -> no signal
+        # nets), and the report carries the wired-nets table + residual worklist.
+        assert "Wired nets" in report
+        assert "Residual wiring worklist" in report
+        assert result.wiring_plan is not None and result.wiring_plan.rails
 
     def test_deterministic(self, demo_frd: Path, tmp_path: Path) -> None:
         r1 = synthesize(demo_frd, CORE, tmp_path / "a", profile="prototype")

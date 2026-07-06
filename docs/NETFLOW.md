@@ -95,7 +95,17 @@ synthesize gate (connectivity errors stop being expected).
 ## Build order
 
 1. Rail resolver + intra-chain wiring consumption (no new syntax; ERC-zero
-   becomes reachable for single-chain designs).
+   becomes reachable for single-chain designs). **Landed** (stage 1,
+   `infersynth/netflow/` + `compile_kicad/wiring.py`): rails group power ports
+   by exact NAME (voltage-aware rail identity is future); a rail source is an
+   out-direction power port or a connector cell's (`function=connectivity`)
+   passive power port — anything else is an `undriven_rail` diagnostic. Chain
+   links wire only under the unique-pairing rule (exactly one out on the
+   left, one in on the right), else an `ambiguous_pairing` diagnostic. Sheet
+   pins are spliced only for ported nets; unwired ports' hierarchical labels
+   stay orphaned in the child (expected residual). Full-hierarchy ERC is
+   REPORTED in SYNTHESIS.md, not gated on — the hard ERC-zero gate flip is
+   item 5, once design-scope convergence removes the expected residual.
 2. Pragma parsing → spec compilation in lint (`feeds`/`use`/`no-pack`).
 3. interfaces.yaml + cell `interfaces:` schema + bundle-aware matching.
 4. Design-scope convergence with variance-triaged ResolutionRequests.
