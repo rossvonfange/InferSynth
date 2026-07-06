@@ -9,6 +9,9 @@ manifest:
   description: 4-pin signal output header (OUT, REF, GND, SHIELD).
   provenance: "generic connectivity, no external source"
   license: GPL-3.0-or-later
+  # See conn-power-2pin's comment: connectors are electromechanical (the
+  # mechanical mating interface is what defines them), not passive.
+  technology: electromechanical
 
 ports:
   OUT: {direction: passive, kind: electrical}
@@ -20,6 +23,8 @@ idioms:
   keywords:
     - output header
     - output connector
+  functions:
+    - connectivity
 
 selection:
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
@@ -31,3 +36,15 @@ verification:
 
 depth:
   level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates, not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering — structural-only cell).
+costs:
+  bom: {qty1: 0.20, qty1k: 0.07}
+  area_mm2: 45
+  power_mw: 0
+  part_count: 1
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

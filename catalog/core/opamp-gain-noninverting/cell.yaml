@@ -9,6 +9,10 @@ manifest:
   description: Non-inverting op-amp gain stage (gain = 1 + Rf/Rg).
   provenance: "AoE 3rd ed. ch. 4 topology (reference only; re-expressed from scratch)"
   license: GPL-3.0-or-later
+  # The gain-setting element is an op-amp IC (archetype_symbol below); the
+  # feedback resistors are passive but don't define the cell's technology —
+  # the active device does.
+  technology: analog-ic
 
 ports:
   IN: {direction: in, kind: electrical}
@@ -21,6 +25,10 @@ idioms:
   keywords:
     - amplifier gain stage
     - non-inverting amplifier
+  # SELECTION.md sec 3: gain stage is the amplification tag verbatim
+  # ("gain, buffering, drive").
+  functions:
+    - amplification
   params:
     gain:
       type: float
@@ -48,3 +56,16 @@ verification:
 
 depth:
   level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (general-purpose op-amp + 2 resistors at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering).
+costs:
+  bom: {qty1: 0.90, qty1k: 0.35}
+  area_mm2: 40
+  power_mw: 5
+  part_count: 3
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

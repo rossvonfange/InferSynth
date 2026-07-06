@@ -1,20 +1,35 @@
 """Catalog: a directory of cell packages with dataset-level checks.
 
-Enforces unique ``name@version`` and the idiom-collision check (DESIGN.md
-section 5, entry gate 4): no two entries may claim the same idiom keyword
-with overlapping parameter ranges unless an explicit disambiguation rule
-is declared.
+Enforces unique ``library/name@version`` and the idiom-collision check
+(DESIGN.md section 5, entry gate 4): no two entries may claim the same idiom
+keyword with overlapping parameter ranges unless an explicit disambiguation
+rule is declared — cross-library, catalog-wide (unchanged by SELECTION.md's
+library layout: a collision is a vocabulary clash regardless of which
+library each claimant lives in).
+
+Layout (SELECTION.md sec 1): a catalog directory holds either library
+directories (KiCad-style grouping, each identified by a ``library.yaml``
+manifest) — the two-level layout — or cell directories directly (the old
+flat layout, kept for tests/fixtures). Detected by presence of
+``library.yaml`` files among the catalog root's immediate subdirectories: if
+any subdir has one, *every* subdir is expected to be a library dir; if none
+do, the root is treated as flat.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from infersynth.catalog.loader import CellPackage, CellPackageError, load_cell
+from infersynth.catalog.taxonomy import TaxonomyError, load_taxonomy
 
 __all__ = ["Catalog", "CatalogError", "IdiomCollision"]
+
+_LIBRARY_KEYS = ("name", "description", "tier", "maintainer")
+_LIBRARY_TIERS = ("official", "community", "local")
 
 
 class CatalogError(ValueError):
@@ -79,35 +94,108 @@ def _params_overlap(a: CellPackage, b: CellPackage) -> tuple[bool, str]:
     return True, f"shared parameter(s) {shared} have overlapping ranges"
 
 
+def _is_library_dir(p: Path) -> bool:
+    return (p / "library.yaml").is_file()
+
+
+def _load_library_manifest(lib_dir: Path) -> tuple[str | None, list[str]]:
+    """Validate one library's ``library.yaml`` (SELECTION.md sec 1).
+
+    Returns ``(library_name, diagnostics)``; ``library_name`` is ``None`` if
+    the manifest is too broken to trust its ``name`` field.
+    """
+    import yaml
+
+    diags: list[str] = []
+    lib_path = lib_dir / "library.yaml"
+    try:
+        data = yaml.safe_load(lib_path.read_text())
+    except yaml.YAMLError as exc:
+        return None, [f"{lib_dir.name}/library.yaml: invalid YAML: {exc}"]
+    if not isinstance(data, dict):
+        return None, [f"{lib_dir.name}/library.yaml: must be a mapping"]
+    unknown = sorted(set(data) - set(_LIBRARY_KEYS))
+    if unknown:
+        diags.append(f"{lib_dir.name}/library.yaml: unknown key(s) {unknown}")
+    for key in _LIBRARY_KEYS:
+        if not data.get(key):
+            diags.append(f"{lib_dir.name}/library.yaml: {key} is required and must be non-empty")
+    tier = data.get("tier")
+    if tier is not None and tier not in _LIBRARY_TIERS:
+        diags.append(
+            f"{lib_dir.name}/library.yaml: tier must be one of {_LIBRARY_TIERS}, got {tier!r}"
+        )
+    name = data.get("name")
+    return (str(name) if name else None), diags
+
+
 class Catalog:
     """A loaded catalog: unique cell packages plus dataset-level validation."""
 
     def __init__(self) -> None:
-        self.cells: dict[str, CellPackage] = {}  # key: name@version
+        self.cells: dict[str, CellPackage] = {}  # key: library/name@version (or bare)
 
     @classmethod
     def load(cls, catalog_dir: str | Path, strict: bool = True) -> Catalog:
-        """Load every cell directory under *catalog_dir* (one level deep).
+        """Load *catalog_dir* — two-level (library dirs of cell dirs) if any
+        immediate subdirectory has a ``library.yaml``, else flat (cell dirs
+        directly, one level deep — the old layout, kept for fixtures).
 
         ``strict`` is forwarded to :func:`load_cell` (unknown cell.yaml
-        sections are errors by default). Raises :class:`CatalogError`
-        collecting all per-cell and dataset-level diagnostics.
+        sections are errors by default). ``catalog_dir/taxonomy.yaml``, if
+        present, is loaded once here and threaded through to every cell so
+        ``idioms.functions`` validates against it (SELECTION.md sec 3).
+        Raises :class:`CatalogError` collecting all per-cell, per-library,
+        and dataset-level diagnostics.
         """
         root = Path(catalog_dir)
         if not root.is_dir():
             raise CatalogError([f"{root}: not a directory"])
         catalog = cls()
         diags: list[str] = []
-        for entry in sorted(p for p in root.iterdir() if p.is_dir()):
+
+        taxonomy_path = root / "taxonomy.yaml"
+        taxonomy: dict[str, Any] | None = None
+        if taxonomy_path.is_file():
             try:
-                cell = load_cell(entry, strict=strict)
+                taxonomy = load_taxonomy(taxonomy_path)
+            except TaxonomyError as exc:
+                diags.append(str(exc))
+
+        subdirs = sorted(p for p in root.iterdir() if p.is_dir())
+        library_dirs = [p for p in subdirs if _is_library_dir(p)]
+
+        def _load_cell_dir(entry: Path, library: str | None, label: str) -> None:
+            try:
+                cell = load_cell(entry, strict=strict, taxonomy=taxonomy)
             except CellPackageError as exc:
-                diags.extend(f"{entry.name}: {d}" for d in exc.diagnostics)
-                continue
+                diags.extend(f"{label}: {d}" for d in exc.diagnostics)
+                return
+            if library is not None:
+                cell = dataclasses.replace(cell, library=library)
             try:
                 catalog.add(cell)
             except CatalogError as exc:
                 diags.extend(exc.diagnostics)
+
+        if library_dirs:
+            for lib_dir in subdirs:
+                if lib_dir not in library_dirs:
+                    diags.append(
+                        f"{lib_dir.name}: expected library.yaml (two-level catalog layout: "
+                        "every catalog-root subdirectory must be a library)"
+                    )
+                    continue
+                lib_name, lib_diags = _load_library_manifest(lib_dir)
+                diags.extend(lib_diags)
+                if lib_diags or lib_name is None:
+                    continue
+                for entry in sorted(p for p in lib_dir.iterdir() if p.is_dir()):
+                    _load_cell_dir(entry, lib_name, f"{lib_name}/{entry.name}")
+        else:
+            for entry in subdirs:
+                _load_cell_dir(entry, None, entry.name)
+
         diags.extend(str(c) for c in catalog.idiom_collisions())
         if diags:
             raise CatalogError(diags)
@@ -122,6 +210,30 @@ class Catalog:
                 ]
             )
         self.cells[cell.key] = cell
+
+    def get(self, ref: str) -> CellPackage:
+        """Resolve *ref* to a :class:`CellPackage`.
+
+        *ref* may be a full key (``library/name@version``, or bare
+        ``name@version`` for a cell loaded outside any library), which is
+        matched exactly; or a bare ``name@version`` used as shorthand across
+        libraries, which resolves iff exactly one loaded cell has that
+        ``bare_key`` — otherwise :class:`CatalogError` reports the
+        ambiguity (or absence).
+        """
+        if ref in self.cells:
+            return self.cells[ref]
+        matches = [c for c in self.cells.values() if c.bare_key == ref]
+        if not matches:
+            raise CatalogError([f"no cell matches {ref!r}"])
+        if len(matches) > 1:
+            raise CatalogError(
+                [
+                    f"ambiguous cell reference {ref!r}: matches "
+                    + ", ".join(sorted(m.key for m in matches))
+                ]
+            )
+        return matches[0]
 
     def idiom_collisions(self) -> list[IdiomCollision]:
         """DESIGN section 5 gate 4: exact-keyword + overlapping-param-range check.
