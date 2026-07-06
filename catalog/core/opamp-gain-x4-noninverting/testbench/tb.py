@@ -58,7 +58,10 @@ def make_testbench(params: Mapping[str, object]) -> Testbench:
             Stimulus(SineSource(name="vin_src", amplitude=1.0, freq_hz=FREQ_HZ), {"out": "vin"}),
         ),
         checks=(
-            *(amplitude_ratio("vin", f"vout{k}", expected=gains[k], tol_pct=1.0) for k in _CHANNELS),
+            *(
+                amplitude_ratio("vin", f"vout{k}", expected=gains[k], tol_pct=1.0)
+                for k in _CHANNELS
+            ),
             *(clipped_within(f"vout{k}", VEE, VCC) for k in _CHANNELS),
         ),
     )
