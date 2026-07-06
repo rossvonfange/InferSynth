@@ -278,7 +278,7 @@ def _cmd_panel(args: argparse.Namespace) -> int:
         )
         return 2
 
-    app = create_app(catalog_dir=args.catalog, reports_dir=args.reports)
+    app = create_app(catalog_dir=args.catalog, reports_dir=args.reports, designs_dir=args.designs)
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
@@ -474,6 +474,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_panel.add_argument(
         "--reports", default=None, help="directory of *.json GateReport files to list under /gates"
+    )
+    p_panel.add_argument(
+        "--designs",
+        default=None,
+        help="directory of synthesized design subdirs (each with SYNTHESIS.md) "
+        "to list under /designs",
     )
     p_panel.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
     p_panel.add_argument("--port", type=int, default=8765, help="bind port (default: 8765)")

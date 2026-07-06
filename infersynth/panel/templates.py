@@ -5,6 +5,7 @@ templates — your call"). No frontend build step, no CDN, inline CSS only.
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 
 _CSS = """
@@ -73,6 +74,7 @@ pre {
   padding: 0.75rem 1rem; margin: 1rem 0; font-weight: 700;
 }
 .banner.fail { border-color: var(--fail); color: var(--fail); }
+.assumed { color: var(--skip); font-weight: 700; }
 .frag {
   border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem;
   background: var(--code-bg); overflow-x: auto;
@@ -100,6 +102,7 @@ def page(title: str, body: str, active: str = "") -> str:
   <nav>
     {nav_link("/", "Catalog", "catalog")}
     {nav_link("/gates", "Gates", "gates")}
+    {nav_link("/designs", "Designs", "designs")}
   </nav>
 </header>
 <main>
@@ -268,6 +271,229 @@ def gates_report(report_path: str, data: dict[str, Any]) -> str:
 {table}
 """
     return page("InferSynth — gate report", body, active="gates")
+
+
+def designs_index(designs: list[dict[str, Any]], base_dir: str | None) -> str:
+    rows = []
+    for d in designs:
+        rows.append(
+            "<tr>"
+            f'<td><a href="/design?path={_e(d["path"])}">{_e(d["name"])}</a></td>'
+            f'<td class="mono">{_e(d["decided"])}/{_e(d["total"])}</td>'
+            f'<td class="mono">{_e(d["path"])}</td>'
+            "</tr>"
+        )
+    empty_row = '<tr><td colspan="3" class="muted">no designs found</td></tr>'
+    table = (
+        "<table><thead><tr><th>Design</th><th>Decided</th><th>Path</th></tr></thead><tbody>"
+        + ("".join(rows) if rows else empty_row)
+        + "</tbody></table>"
+    )
+    hint = (
+        f'<p class="muted">Listing <code class="mono">{_e(base_dir)}</code> for immediate '
+        "subdirectories that contain <code>SYNTHESIS.md</code>.</p>"
+        if base_dir
+        else '<p class="muted">No designs directory configured (--designs), '
+        "and no ?dir= given.</p>"
+    )
+    body = f"<h1>Designs</h1>{hint}{table}"
+    return page("InferSynth — designs", body, active="designs")
+
+
+# --- minimal stdlib markdown rendering (no CDN, no markdown dependency) ----
+#
+# SYNTHESIS.md only ever emits a small, known subset (headers, **bold**,
+# `code`, "- " bullet lists, and "|"-delimited tables with a "|---|" divider
+# row) — see infersynth.synthesize._render_report. A tiny line-based
+# converter covering exactly that subset keeps the panel dependency-free
+# (UX.md "no CDN/no build step") without hand-rolling a general markdown
+# parser we'd have to maintain.
+
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_CODE_RE = re.compile(r"`([^`]+)`")
+_HEADER_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_TABLE_SEP_RE = re.compile(r"^:?-+:?$")
+
+
+def _inline_md(s: str) -> str:
+    s = _e(s)
+    s = _BOLD_RE.sub(r"<strong>\1</strong>", s)
+    s = _CODE_RE.sub(r"<code>\1</code>", s)
+    s = s.replace("⚠ASSUMED", '<span class="assumed">⚠ASSUMED</span>')
+    return s
+
+
+def _render_md_table(lines: list[str]) -> str:
+    rows = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in lines]
+    if len(rows) >= 2 and all(_TABLE_SEP_RE.match(c) for c in rows[1]):
+        header, body_rows = rows[0], rows[2:]
+        thead = "<tr>" + "".join(f"<th>{_inline_md(c)}</th>" for c in header) + "</tr>"
+        tbody = "".join(
+            "<tr>" + "".join(f"<td>{_inline_md(c)}</td>" for c in r) + "</tr>" for r in body_rows
+        )
+        return f"<table><thead>{thead}</thead><tbody>{tbody}</tbody></table>"
+    tbody = "".join(
+        "<tr>" + "".join(f"<td>{_inline_md(c)}</td>" for c in r) + "</tr>" for r in rows
+    )
+    return f"<table><tbody>{tbody}</tbody></table>"
+
+
+def render_markdown(text: str) -> str:
+    """Render the small markdown subset ``SYNTHESIS.md`` emits — see module
+    comment above for the documented, deliberately-limited feature set."""
+    out: list[str] = []
+    in_ul = False
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            i += 1
+            continue
+        m = _HEADER_RE.match(line)
+        if m:
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            level = len(m.group(1))
+            out.append(f"<h{level}>{_inline_md(m.group(2))}</h{level}>")
+            i += 1
+            continue
+        if line.lstrip().startswith("- "):
+            if not in_ul:
+                out.append("<ul>")
+                in_ul = True
+            out.append(f"<li>{_inline_md(line.lstrip()[2:])}</li>")
+            i += 1
+            continue
+        if line.strip().startswith("|"):
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table_lines.append(lines[i])
+                i += 1
+            out.append(_render_md_table(table_lines))
+            continue
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+        out.append(f"<p>{_inline_md(line)}</p>")
+        i += 1
+    if in_ul:
+        out.append("</ul>")
+    return "\n".join(out)
+
+
+def _trace_requirement(r: dict[str, Any]) -> str:
+    status = r["status"]
+    badge_cls = "pass" if status == "decided" else "fail"
+
+    cand_rows = "".join(
+        f"<tr><td class='mono'>{_e(c['cell_key'])}</td>"
+        f"<td class='mono'>{_e(c['surfaced_by'])}</td>"
+        f"<td>{', '.join(_e(k) for k in c['matched_keywords']) or '&mdash;'}</td></tr>"
+        for c in r["candidates_considered"]
+    )
+    candidates_html = (
+        "<table><thead><tr><th>Cell</th><th>Surfaced by</th><th>Matched keywords</th></tr>"
+        "</thead><tbody>"
+        + (cand_rows or '<tr><td colspan="3" class="muted">none considered</td></tr>')
+        + "</tbody></table>"
+    )
+
+    winner_cells = r["winner"]["cells"] if r["winner"] else None
+    fin_rows = []
+    for f in r["finalists"]:
+        is_winner = winner_cells is not None and f["cells"] == winner_cells
+        winner_badge = ' <span class="badge pass">WINNER</span>' if is_winner else ""
+        unpriced_badge = ' <span class="badge skipped">UNPRICED</span>' if f["unpriced"] else ""
+        chain = " &rarr; ".join(_e(c) for c in f["cells"])
+        cv = f["cost_vector"]
+        cost_txt = ", ".join(
+            f"{_e(k)}={_e(v)}" for k, v in sorted(cv.items()) if k not in ("bom", "unpriced")
+        )
+        fin_rows.append(
+            "<tr>"
+            f"<td class='mono'>{chain}{winner_badge}</td>"
+            f"<td class='mono'>{f['score']:.4f}</td>"
+            f"<td class='mono'>{cost_txt}{unpriced_badge}</td>"
+            "</tr>"
+        )
+    finalists_html = (
+        "<table><thead><tr><th>Chain</th><th>Weighted score</th><th>Cost vector</th></tr>"
+        "</thead><tbody>"
+        + ("".join(fin_rows) or '<tr><td colspan="3" class="muted">none</td></tr>')
+        + "</tbody></table>"
+    )
+
+    if r["winner"]:
+        winner_html = (
+            f"<p><strong>Winner:</strong> <span class='mono'>"
+            f"{' &rarr; '.join(_e(c) for c in r['winner']['cells'])}"
+            f"</span> (score {r['winner']['score']:.4f})</p>"
+        )
+    else:
+        winner_html = '<p><strong>Winner:</strong> <span class="muted">none (undecided)</span></p>'
+
+    rejections_html = ""
+    if r["rejections"]:
+        items = "".join(
+            f"<li class='mono'>[{_e(rj['code'])}] {_e(rj['message'])}</li>"
+            for rj in r["rejections"]
+        )
+        rejections_html = f"<p><strong>Rejections</strong></p><ul class='plain'>{items}</ul>"
+
+    return f"""
+<h3>{_e(r['requirement_id'])} <span class="badge {badge_cls}">{_e(status)}</span></h3>
+<p><strong>Candidates considered</strong></p>
+{candidates_html}
+<p><strong>Finalists</strong></p>
+{finalists_html}
+{winner_html}
+<p><strong>Justification:</strong> {_e(r['justification'])}</p>
+{rejections_html}
+"""
+
+
+def _render_trace(trace: dict[str, Any]) -> str:
+    header = (
+        '<p class="muted">profile: <span class="mono">'
+        f"{_e(trace['profile'])}</span> &middot; lockfile: <span class='mono'>"
+        f"{_e(trace['lockfile'] or '(none — cell.yaml costs)')}</span></p>"
+    )
+    reqs_html = "".join(_trace_requirement(r) for r in trace["requirements"])
+    return header + reqs_html
+
+
+def design_page(
+    name: str,
+    synthesis_html: str,
+    trace: dict[str, Any] | None,
+    trace_error: str | None,
+) -> str:
+    if trace_error:
+        trace_html = f'<div class="banner fail">Selection trace error: {_e(trace_error)}</div>'
+    elif trace is not None:
+        trace_html = _render_trace(trace)
+    else:
+        trace_html = '<p class="muted">No selection_trace.json found for this design.</p>'
+
+    body = f"""
+<p><a href="/designs">&larr; designs</a></p>
+<h1>{_e(name)}</h1>
+
+<h2>Synthesis report</h2>
+{synthesis_html}
+
+<h2>Selection trace</h2>
+{trace_html}
+"""
+    return page(f"InferSynth — {name}", body, active="designs")
 
 
 def error_page(title: str, message: str, status_hint: str = "") -> str:
