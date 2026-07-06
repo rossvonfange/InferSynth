@@ -20,6 +20,10 @@ CATALOG = Path(__file__).resolve().parents[1] / "catalog" / "core"
 NONINV = CATALOG / "opamp-gain-noninverting"
 X4 = CATALOG / "opamp-gain-x4-noninverting"
 DECOUPLING = CATALOG / "decoupling"
+UNITY = CATALOG / "unity-buffer"
+INVERTING = CATALOG / "opamp-gain-inverting"
+VREF = CATALOG / "vref-shunt"
+CLAMP = CATALOG / "output-clamp"
 _TAXONOMY = load_taxonomy(CATALOG.parent / "taxonomy.yaml")
 
 
@@ -40,6 +44,30 @@ class TestBehavioralCellGate:
         assert result.status == GateStatus.PASS
         for k in (1, 2, 3, 4):
             assert any(f"vout{k}" in d for d in result.diagnostics)
+
+    def test_unity_buffer_passes(self):
+        result = simulation_cell_gate(load_cell(UNITY))
+        assert result.status == GateStatus.PASS
+        assert any("amplitude_ratio" in d for d in result.diagnostics)
+        assert any("overdrive/clipped_within" in d for d in result.diagnostics)
+
+    def test_inverting_passes_and_is_inverted(self):
+        result = simulation_cell_gate(load_cell(INVERTING))
+        assert result.status == GateStatus.PASS
+        assert any("linear/inverted" in d for d in result.diagnostics)
+        assert any("linear/amplitude_ratio" in d for d in result.diagnostics)
+
+    def test_vref_shunt_passes(self):
+        result = simulation_cell_gate(load_cell(VREF))
+        assert result.status == GateStatus.PASS
+        assert any("regulated/settles_to" in d for d in result.diagnostics)
+        assert any("low_vin/settles_to" in d for d in result.diagnostics)
+
+    def test_output_clamp_passes(self):
+        result = simulation_cell_gate(load_cell(CLAMP))
+        assert result.status == GateStatus.PASS
+        assert any("linear/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("overdrive/clipped_within" in d for d in result.diagnostics)
 
     def test_structural_cell_skips_loudly(self):
         result = simulation_cell_gate(load_cell(DECOUPLING))
@@ -68,6 +96,11 @@ class TestDeterminism:
 
     def test_x4_twice_is_bit_identical(self):
         cell = load_cell(X4)
+        assert run_cell_simulation(cell) == run_cell_simulation(cell)
+
+    @pytest.mark.parametrize("cell_dir", [UNITY, INVERTING, VREF, CLAMP])
+    def test_new_cells_are_bit_identical(self, cell_dir: Path):
+        cell = load_cell(cell_dir)
         assert run_cell_simulation(cell) == run_cell_simulation(cell)
 
 
@@ -129,7 +162,7 @@ class TestFailureModes:
         assert any("binder" in d for d in result.diagnostics)
 
 
-@pytest.mark.parametrize("cell_dir", [NONINV, X4])
+@pytest.mark.parametrize("cell_dir", [NONINV, X4, UNITY, INVERTING, VREF, CLAMP])
 def test_cell_gates_all_pass(cell_dir: Path):
     report = run_cell_gates(cell_dir)
     assert report.ok
