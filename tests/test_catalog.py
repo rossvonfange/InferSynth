@@ -229,6 +229,10 @@ class TestSchemaV1GoldenCells:
             "core/adc-driver-rc@0.1.0",
             "core/current-source-bjt@0.1.0",
             "core/power-input-conditioning@0.1.0",
+            "core/instrumentation-amp-3opamp@0.1.0",
+            "core/bridge-interface@0.1.0",
+            "core/rail-splitter-virtual-gnd@0.1.0",
+            "core/input-protection-rfi@0.1.0",
         }
         assert all(c.library == "core" for c in catalog.cells.values())
 

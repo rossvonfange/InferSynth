@@ -63,12 +63,14 @@ class TestLintFrd:
 
 
 class TestCatalogSearch:
-    def test_amplifier_finds_all_four_cells(self):
+    def test_amplifier_finds_all_five_cells(self):
         # opamp-gain-inverting joined the catalog with keywords "inverting
         # amplifier" / "amplifier gain stage" — both contain "amplifier", so
         # it now surfaces alongside the non-inverting single/quad cells.
         # summing-offset-stage's "summing amplifier" keyword also contains
-        # "amplifier", so it surfaces too.
+        # "amplifier", so it surfaces too, as does (batch 5)
+        # instrumentation-amp-3opamp ("instrumentation amplifier" /
+        # "differential amplifier").
         result = tools.catalog_search("amplifier", catalog_dir=str(CATALOG))
         keys = {r["cell"] for r in result["results"]}
         assert keys == {
@@ -76,6 +78,7 @@ class TestCatalogSearch:
             "core/opamp-gain-x4-noninverting@0.1.0",
             "core/opamp-gain-inverting@0.1.0",
             "core/summing-offset-stage@0.1.0",
+            "core/instrumentation-amp-3opamp@0.1.0",
         }
         assert all(r["library"] == "core" for r in result["results"])
 
@@ -85,7 +88,7 @@ class TestCatalogSearch:
 
     def test_empty_query_returns_everything(self):
         result = tools.catalog_search("", catalog_dir=str(CATALOG))
-        assert len(result["results"]) == 14
+        assert len(result["results"]) == 18
 
 
 class TestCatalogValidate:
