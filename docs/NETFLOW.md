@@ -54,7 +54,7 @@ Bracket-tag syntax (the `[D:…]` convention already parsed): pragmas are
 compiled by lint into spec entries — the FRD stays prose, the spec stays the
 formal artifact.
 
-- `[feeds: <req-id>[.<port-or-role>]]` — requirement-level dataflow.
+- `[feeds: <req-id>[:<port-or-role>]]` — requirement-level dataflow.
 - `[use: <library/cell>]` — pin an exact cell (the legitimate direct route to
   a disambiguation-carrying cell).
 - `[no-pack]` — per-requirement absorption forbid (SELECTION §5).
