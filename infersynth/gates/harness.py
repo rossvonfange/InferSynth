@@ -145,7 +145,13 @@ def generate_harness(
         shape = _SHAPE[spec["direction"]]
         pins.append(_sheet_pin(pname, shape, sx, y))
         scaffolding.append(_global_label(pname, shape, sx, y))
-        if spec["kind"] == "power" or spec["direction"] == "in":
+        # An "out"-direction port (e.g. a regulator's VOUT) is already driven
+        # by the cell's own silicon — adding a PWR_FLAG there would stack a
+        # second power source on the net and fail ERC's pin_to_pin check
+        # (power_out vs power_out). Only ports the harness itself must drive
+        # (power-kind ports that aren't already a source, and any "in"-
+        # direction port) get a flag.
+        if spec["direction"] != "out" and (spec["kind"] == "power" or spec["direction"] == "in"):
             n_flag += 1
             scaffolding.append(_pwr_flag(n_flag, sx, y))
         y += _PIN_STRIDE

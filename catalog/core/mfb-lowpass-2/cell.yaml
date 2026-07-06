@@ -1,0 +1,146 @@
+# Multiple-feedback (MFB) 2nd-order low-pass filter, unity gain (K=1,
+# inverting) — SEED_PLAN.md sec 2 signal-path cell (Ch 6, active filters).
+# Fragment authored via KiCAD-MCP-Server, same conventions as the golden
+# cells: hierarchical labels coincident with pin endpoints, 1.27mm grid,
+# ${IS.*} value slot.
+#
+# This cell DELIBERATELY collides with sallen-key-lowpass-2's idiom
+# ("active low-pass filter") — SEED_PLAN.md sec 2 note: the two topologies
+# solve the same textbook problem and this seeds the catalog's idiom-
+# collision machinery (catalog.py idiom_collisions) with a real case from
+# day one. See `idioms.disambiguation` below for the resolution rule; run
+# `infersynth catalog validate` to confirm the collision is waived by it.
+#
+# Topology: R1 from IN to node A (the summing junction); R3 from node A to
+# node B (the op-amp's inverting input); R4 from node A to OUT (the parallel
+# feedback resistor, in parallel with the C5 feedback path below); C2 shunts
+# node A to REF; C5 feeds back from node B to OUT. The + input ties directly
+# to REF (no series/shunt network on the non-inverting side — this is what
+# makes it "inverting" rather than Sallen-Key's non-inverting unity-gain
+# follower).
+#
+# --- Derivation (nodal analysis, ideal op-amp, V+ = REF = virtual 0) ---
+# KCL at node B (op-amp inverting input draws no current):
+#   (V_A - V_B)/R3 = (V_B - V_OUT)*s*C5, and V_B = 0 (virtual ground)
+#   => V_A = -R3*C5*s*V_OUT                                        ...(1)
+# KCL at node A (sum of currents leaving A is zero):
+#   (V_IN - V_A)/R1 = (V_A - V_OUT)/R4 + V_A*s*C2 + (V_A - V_B)/R3
+# Substituting (1) and V_B = 0, then solving for V_OUT/V_IN:
+#   H(s) = V_OUT/V_IN
+#        = -(R4/R1) / [1 + s*C5*(R3 + R4 + R3*R4/R1) + s^2*R3*R4*C2*C5]
+# Matching the standard 2nd-order denominator 1 + s/(Q*w0) + s^2/w0^2:
+#   w0^2 = 1/(R3*R4*C2*C5)                      => fc = w0/(2*pi)
+#   1/(Q*w0) = C5*(R3 + R4 + R3*R4/R1)
+# Unity-gain magnitude constraint: K = |R4/R1| = 1  =>  R4 = R1 (call it R).
+# With R4=R1=R, R3*R4/R1 = R3, so the Q equation becomes:
+#   C5*(2*R3 + R) = 1/(Q*w0)                                       ...(b)
+#   R3*R*C2*C5 = 1/w0^2                                            ...(a)
+# Fix C5 = c_base_farads (the free scale parameter, same role as
+# sallen-key-lowpass-2's c_base_farads) and choose C2 at the *minimum-
+# discriminant* point — the smallest C2 for which (a)+(b) have a REAL
+# solution for R, R3 (below this C2 the quadratic in R goes complex; this is
+# the standard MFB design shortcut, e.g. Deliyannis/AoE ch.6 cookbook
+# tables). Substituting C2 = 8*Q^2*C5 into (a)+(b) and eliminating R3 gives
+# a quadratic in R whose discriminant is exactly zero at this C2 (verified
+# below), collapsing to the single closed-form root:
+#   R  (= R1 = R4) = 1 / (2*Q*C5*w0)
+#   R3             = R/2
+# i.e. with w0 = 2*pi*fc_hz:
+#   R1 = R4 = 1 / (2*pi*fc_hz*2*q*c_base_farads)
+#   R3      = R1 / 2
+#   C2      = 8*q^2*c_base_farads
+#   C5      = c_base_farads
+#
+# --- Numeric sanity check (documented per SEED_PLAN acceptance criteria) ---
+# fc_hz=1000, q=0.7071, c_base_farads=1e-8 (the idiom defaults):
+#   R1 = R4 = 11254.06 ohm  (~11.25 kohm)
+#   R3      = 5627.03 ohm  (~5.63 kohm)
+#   C2      = 3.9999e-8 F  (~40 nF)
+#   C5      = 1e-8 F       (10 nF)
+# Plugging these back into w0=1/sqrt(R3*R4*C2*C5) and
+# Q=1/(w0*C5*(R3+R4+R3*R4/R1)) recovers fc=1000.0 Hz and Q=0.7071 exactly
+# (verified numerically with Python during authoring — see report). All
+# values are positive and in a plausible kohm/nF range at the defaults, as
+# required.
+manifest:
+  name: mfb-lowpass-2
+  version: "0.1.0"
+  description: 2nd-order unity-gain multiple-feedback (MFB) active low-pass filter.
+  provenance: "AoE 3rd ed. ch. 6 topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The op-amp (active device) sets the technology; R1/R3/R4/C2/C5 are
+  # passive supporting parts.
+  technology: analog-ic
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  REF: {direction: in, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - active low-pass filter
+    - mfb low-pass
+  # SELECTION.md sec 3: frequency shaping is the filtering tag verbatim.
+  functions:
+    - filtering
+  # SEED_PLAN.md sec 2 note: sallen-key-lowpass-2 is the default winner for
+  # "active low-pass filter" (fewer parts, non-inverting, better op-amp
+  # sensitivity at low Q); MFB is selected only on explicit request or when
+  # an inverting topology is a hard requirement (MFB's gain is inherently
+  # inverting, unlike Sallen-Key's non-inverting follower). This is a
+  # judgment rule, not a parameter-range distinction — both cells claim the
+  # same idiom params and full param ranges overlap; disambiguation is by
+  # declared rule (this string), not disjoint ranges.
+  disambiguation: >
+    Same idiom as sallen-key-lowpass-2 ("active low-pass filter"); sallen-key
+    is the default winner (fewer parts, non-inverting). Select mfb-lowpass-2
+    only on explicit request or when the design hard-requires an inverting
+    2nd-order low-pass response (MFB's summing-node topology is inherently
+    inverting; Sallen-Key's unity-gain follower is not).
+  params:
+    fc_hz:
+      type: float
+      range: [1.0, 1.0e+6]
+    q:
+      type: float
+      range: [0.1, 5.0]
+      default: 0.7071
+    c_base_farads:
+      type: float
+      range: [1.0e-10, 1.0e-6]
+      default: 1.0e-8
+
+bindings:
+  C2: {expr: "8 * q * q * c_base_farads", format: capacitance}
+  C5: {expr: "c_base_farads", format: capacitance}
+  R1: "1 / (2 * q * c_base_farads * 6.283185307179586 * fc_hz)"
+  R3: "1 / (4 * q * c_base_farads * 6.283185307179586 * fc_hz)"
+  R4: "1 / (2 * q * c_base_farads * 6.283185307179586 * fc_hz)"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (general-purpose op-amp + 3 resistors + 2 capacitors
+# at typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 1.25, qty1k: 0.50}
+  area_mm2: 60
+  power_mw: 5
+  part_count: 6
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
