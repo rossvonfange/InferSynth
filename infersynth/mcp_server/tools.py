@@ -314,14 +314,48 @@ def match_catalog(**_kwargs: Any) -> dict[str, Any]:
     )
 
 
-def synthesize(**_kwargs: Any) -> dict[str, Any]:
-    """End-to-end FRD/spec -> verified schematic synthesis."""
-    raise NotImplementedStageError(
-        "synthesize",
-        "the full synthesis pipeline once elaborate_spec + match_catalog land "
-        "(DESIGN.md section 10); today, drive lint_frd -> bind_cell -> "
-        "instantiate_cell -> run_gates by hand",
+def synthesize(
+    frd: str,
+    catalog_dir: str,
+    out_dir: str,
+    profile: str | dict[str, Any] = "production",
+    name: str | None = None,
+    lockfile: str | None = None,
+) -> dict[str, Any]:
+    """Full pipeline: lint -> match -> decide -> instantiate winners into a design."""
+    from infersynth.decide.lockfile import load as _load_lockfile
+    from infersynth.synthesize import synthesize as _synthesize
+
+    result = _synthesize(
+        frd,
+        catalog_dir,
+        out_dir,
+        profile=profile,
+        name=name,
+        lockfile=_load_lockfile(lockfile) if lockfile else None,
     )
+    return {
+        "root": str(result.root),
+        "instantiated": [
+            {
+                "requirement_id": i.requirement_id,
+                "cell": i.cell_key,
+                "instname": i.instname,
+                "sheet": i.sheet_path,
+                "params": dict(i.params),
+                "param_sources": dict(i.param_sources),
+            }
+            for i in result.instantiated
+        ],
+        "skipped": [
+            {"requirement_id": r, "cell": c, "reason": why} for r, c, why in result.skipped
+        ],
+        "undecided": result.decision.undecided(),
+        "all_decided": result.all_decided,
+        "assumed_param_count": result.assumed_param_count,
+        "trace": str(result.trace_path) if result.trace_path else None,
+        "report": str(result.report_path),
+    }
 
 
 def catalog_submit_check(**_kwargs: Any) -> dict[str, Any]:

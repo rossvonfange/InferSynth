@@ -180,10 +180,25 @@ def match(
                 )
             )
 
+        # --- disambiguation primacy (SELECTION §4/§5) -----------------------
+        # Cells declaring an ``idioms.disambiguation`` rule are never inferred
+        # directly: when at least one rule-free candidate exists, rule-carrying
+        # candidates are excluded from chain construction (they remain visible
+        # in ``candidates`` as considered-but-not-inferable). Mirrors the lint
+        # resolver's winner rule; without this, a downstream tie-break can
+        # silently pick e.g. the inverting amplifier for a "non-inverting"
+        # requirement — the exact silent-mis-inference class DESIGN §2 forbids.
+        def _has_rule(c):
+            cell = catalog.cells.get(c.cell_key)
+            return bool(cell is not None and cell.disambiguation)
+
+        rule_free = tuple(c for c in in_scope if not _has_rule(c))
+        chainable = rule_free if rule_free else in_scope
+
         # --- bidirectional propagation -> closed chains ---------------------
         req_endpoints = endpoints.get(req.id)
         closed = propagate_chains(
-            req.id, in_scope, catalog, req_endpoints, knobs.expansion_budget
+            req.id, chainable, catalog, req_endpoints, knobs.expansion_budget
         )
         if not closed:
             # candidates surfaced but none bridge the declared endpoints

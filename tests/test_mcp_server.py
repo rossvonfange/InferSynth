@@ -188,7 +188,7 @@ class TestRunGates:
 class TestNotImplemented:
     @pytest.mark.parametrize(
         "name",
-        ["elaborate_spec", "match_catalog", "synthesize", "catalog_submit_check"],
+        ["elaborate_spec", "match_catalog", "catalog_submit_check"],
     )
     def test_raises_not_implemented_stage_error(self, name):
         handler = getattr(tools, name)

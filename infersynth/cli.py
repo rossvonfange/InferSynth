@@ -89,6 +89,62 @@ def _cmd_catalog_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _cmd_synthesize(args: argparse.Namespace) -> int:
+    import json
+
+    from infersynth.catalog import CatalogError
+    from infersynth.decide.lockfile import load as load_lockfile
+    from infersynth.lint.reqif_io import ReqIFImportError
+    from infersynth.synthesize import synthesize
+
+    if args.profile and args.weights:
+        print(
+            "infersynth synthesize: --profile and --weights are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+    profile: str | dict
+    if args.weights:
+        try:
+            profile = json.loads(args.weights)
+        except json.JSONDecodeError as exc:
+            print(f"infersynth synthesize: --weights is not valid JSON: {exc}", file=sys.stderr)
+            return 1
+    else:
+        profile = args.profile or "production"
+
+    try:
+        lockfile = load_lockfile(args.lockfile) if args.lockfile else None
+        result = synthesize(
+            args.frd,
+            args.catalog,
+            args.out,
+            profile=profile,
+            name=args.name,
+            lockfile=lockfile,
+            write_trace=not args.no_trace,
+        )
+    except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
+        print(f"infersynth synthesize: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"root: {result.root}")
+    for inst in result.instantiated:
+        flags = f"  [ASSUMED: {', '.join(inst.assumed_params)}]" if inst.assumed_params else ""
+        print(f"  + {inst.instname}  ({inst.cell_key}){flags}")
+    for rid, key, reason in result.skipped:
+        print(f"  ! skipped {rid}/{key}: {reason}")
+    for rid, status in sorted(result.decision.undecided().items()):
+        print(f"  ? undecided {rid}: {status}")
+    if result.trace_path is not None:
+        print(f"trace: {result.trace_path}")
+    print(f"report: {result.report_path}")
+    if result.skipped or not result.all_decided:
+        return 3
+    return 0
+
+
 def _cmd_decide(args: argparse.Namespace) -> int:
     import json
 
@@ -269,6 +325,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_decide.add_argument("--lockfile", metavar="F", help="costs.lock.json to override cell costs")
     p_decide.add_argument("--trace", metavar="OUT.json", help="write selection_trace.json to OUT")
     p_decide.set_defaults(func=_cmd_decide)
+
+    p_syn = sub.add_parser(
+        "synthesize",
+        help="full pipeline: lint -> match -> decide -> instantiate winners into a KiCad design",
+    )
+    p_syn.add_argument("--frd", required=True, metavar="F.md", help="path to the FRD")
+    p_syn.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_syn.add_argument("--out", required=True, metavar="DIR", help="design output directory")
+    p_syn.add_argument("--name", metavar="N", help="design name (default: FRD stem)")
+    p_syn.add_argument(
+        "--profile", metavar="P", help="named weight profile (prototype|production|hobbyist)"
+    )
+    p_syn.add_argument(
+        "--weights", metavar="JSON", help='inline weights, e.g. \'{"bom": 8, "area_mm2": 5}\''
+    )
+    p_syn.add_argument("--lockfile", metavar="F", help="costs.lock.json to override cell costs")
+    p_syn.add_argument(
+        "--no-trace", action="store_true", help="skip writing selection_trace.json"
+    )
+    p_syn.set_defaults(func=_cmd_synthesize)
 
     p_costs = sub.add_parser("costs", help="cost lockfile operations")
     costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)

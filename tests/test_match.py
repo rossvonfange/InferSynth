@@ -374,21 +374,32 @@ class TestDeterminism:
 
 
 class _SpreadScorer:
-    """Deterministic scorer with deliberate spread. The original fixture
-    manufactured spread from opamp-gain-inverting lacking a behavioral model
-    (StructuralScorer 0 vs 1), which stopped being true once its behavior.py
-    landed — the ambiguity signal must not depend on catalog model coverage."""
+    """Deterministic scorer with deliberate spread over a synthetic catalog.
+
+    Earlier fixtures leaned on real core-catalog properties (model coverage,
+    then rule-free candidate counts) and broke whenever the catalog evolved;
+    the variance signal is a property of the MACHINERY, so it gets a synthetic
+    two-cell catalog where both cells are rule-free and the scorer alone
+    manufactures the spread."""
 
     def score(self, chain, catalog):
-        return 0.0 if any("x4" in key for key in chain.cells) else 1.0
+        return 0.0 if any("beta" in key for key in chain.cells) else 1.0
 
 
 class TestVarianceResolution:
-    def test_variance_emits_resolution_request(self):
-        cat = Catalog.load(CORE)
-        # three amplifier cells claim "amplifier gain stage"; the stub scorer
-        # manufactures score spread -> variance -> ResolutionRequest
-        res = match(one_req("amplifier gain stage", req_id="SYS.1"), cat, scorer=_SpreadScorer())
+    def _two_cell_catalog(self, tmp_path):
+        # distinct keywords (identical ones would trip the idiom-collision
+        # gate); the requirement text below contains both, so both cells
+        # surface for the same requirement
+        write_cell(tmp_path, "alpha", keywords=["gain stage"])
+        write_cell(tmp_path, "beta", keywords=["amplifier stage"])
+        return Catalog.load(tmp_path)
+
+    _REQ = "an amplifier stage acting as a gain stage"
+
+    def test_variance_emits_resolution_request(self, tmp_path):
+        cat = self._two_cell_catalog(tmp_path)
+        res = match(one_req(self._REQ, req_id="SYS.1"), cat, scorer=_SpreadScorer())
         assert len(res.resolution_requests) == 1
         rr = res.resolution_requests[0]
         assert rr.requirement_id == "SYS.1"
@@ -396,12 +407,13 @@ class TestVarianceResolution:
         assert rr.diagnostic.code == "frd.ambiguous"
         assert "frd.ambiguous" in [d.code for d in res.diagnostics]
 
-    def test_high_threshold_suppresses_request(self):
-        cat = Catalog.load(CORE)
+    def test_high_threshold_suppresses_request(self, tmp_path):
+        cat = self._two_cell_catalog(tmp_path)
         res = match(
-            one_req("amplifier gain stage", req_id="SYS.1"),
+            one_req(self._REQ, req_id="SYS.1"),
             cat,
             knobs=MatchKnobs(variance_threshold=1.0),
+            scorer=_SpreadScorer(),
         )
         assert res.resolution_requests == ()
 
