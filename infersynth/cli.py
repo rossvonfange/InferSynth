@@ -62,6 +62,24 @@ def _cmd_catalog_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_panel(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from infersynth.panel.app import create_app
+    except ImportError as exc:
+        print(
+            "infersynth panel: missing panel extra dependencies "
+            f"({exc}); install with `pip install infersynth[panel]`",
+            file=sys.stderr,
+        )
+        return 2
+
+    app = create_app(catalog_dir=args.catalog, reports_dir=args.reports)
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="infersynth",
@@ -93,6 +111,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_val = cat_sub.add_parser("validate", help="validate a catalog directory")
     p_val.add_argument("catalog_dir", help="directory of cell packages")
     p_val.set_defaults(func=_cmd_catalog_validate)
+
+    p_panel = sub.add_parser(
+        "panel", help="run the sidecar web panel (read-mostly catalog + gate viewer)"
+    )
+    p_panel.add_argument(
+        "--catalog", default="catalog", help="catalog directory (default: ./catalog)"
+    )
+    p_panel.add_argument(
+        "--reports", default=None, help="directory of *.json GateReport files to list under /gates"
+    )
+    p_panel.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
+    p_panel.add_argument("--port", type=int, default=8765, help="bind port (default: 8765)")
+    p_panel.set_defaults(func=_cmd_panel)
 
     return parser
 
