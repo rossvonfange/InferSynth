@@ -1,0 +1,72 @@
+# Quad-pack variant of opamp-gain-noninverting — the "LUT-4 vs LUT-6" packing pair.
+# Four independent non-inverting channels around one quad op-amp (multi-unit symbol:
+# units A-D + power unit E). Exists to (a) exercise multi-unit symbols end-to-end,
+# (b) seed the idiom-disambiguation machinery with a real collision against the
+# single-channel cell, and (c) define the v2 packing rule: the binder MAY rewrite
+# 4x opamp-gain-noninverting -> 1x this cell when rails match and isolation
+# constraints permit (scored: cost/area vs crosstalk/channel independence).
+manifest:
+  name: opamp-gain-x4-noninverting
+  version: "0.1.0"
+  description: Quad non-inverting op-amp gain stage (4 channels, shared rails, one package).
+  provenance: "AoE 3rd ed. ch. 4 topology x4 (reference only; re-expressed from scratch)"
+  license: GPL-3.0-or-later
+
+ports:
+  IN1: {direction: in, kind: electrical}
+  IN2: {direction: in, kind: electrical}
+  IN3: {direction: in, kind: electrical}
+  IN4: {direction: in, kind: electrical}
+  OUT1: {direction: out, kind: electrical}
+  OUT2: {direction: out, kind: electrical}
+  OUT3: {direction: out, kind: electrical}
+  OUT4: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - amplifier gain stage
+    - non-inverting amplifier
+  params:
+    channels:
+      type: int
+      allowed: [4]
+    gain1: {type: float, range: [1.0, 1000.0]}
+    gain2: {type: float, range: [1.0, 1000.0]}
+    gain3: {type: float, range: [1.0, 1000.0]}
+    gain4: {type: float, range: [1.0, 1000.0]}
+    rg_ohms:
+      type: float
+      range: [100.0, 100000.0]
+      default: 1000.0
+  disambiguation: >
+    Collides with opamp-gain-noninverting by design (same keywords, overlapping
+    gain ranges). Resolve on channel count: a single gain-stage requirement
+    infers the single cell; this cell is selected only by an explicit
+    channels=4 requirement or by the v2 packer rewriting 4 compatible single
+    instances (matching VCC/VEE/GND rails, no isolation constraint between
+    channels) into one quad. Never inferred directly from a lone requirement.
+
+bindings:
+  R1: "(gain1 - 1) * rg_ohms"
+  R2: "rg_ohms"
+  R3: "(gain2 - 1) * rg_ohms"
+  R4: "rg_ohms"
+  R5: "(gain3 - 1) * rg_ohms"
+  R6: "rg_ohms"
+  R7: "(gain4 - 1) * rg_ohms"
+  R8: "rg_ohms"
+
+selection:
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:TL074
+  package_sharing: {units: 4, power_unit: separate}
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
