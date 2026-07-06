@@ -1,8 +1,9 @@
-"""Stub gates with settled interfaces (DESIGN.md section 7, gates 1, 2, 4).
+"""Stub gates with settled interfaces (DESIGN.md section 7, gates 1, 4).
 
 Each returns SKIPPED with a reason until its backend lands; the GateRunner
 report makes that loud. The context-key contracts documented here are the
-interfaces the real implementations will honor.
+interfaces the real implementations will honor. (The ERC and netlist gates are
+implemented in :mod:`infersynth.gates.erc` / :mod:`infersynth.gates.netlist`.)
 """
 
 from __future__ import annotations
@@ -12,21 +13,7 @@ from typing import Any
 
 from infersynth.gates.runner import GateResult
 
-__all__ = ["erc_gate", "simulation_gate", "render_review_gate"]
-
-
-def erc_gate(context: Mapping[str, Any]) -> GateResult:
-    """ERC-zero via ``kicad-cli`` (DESIGN section 7 gate 2). Context keys:
-
-    * ``schematic_path``: root .kicad_sch of the generated design
-    * ``erc_allowlist``: documented benign-warning allowlist (optional)
-
-    Will run full-hierarchy ERC from the root sheet and fail on any error not
-    on the allowlist.
-    """
-    return GateResult.skipped(
-        "erc", "not implemented: kicad-cli ERC backend not wired up in this pass"
-    )
+__all__ = ["simulation_gate", "render_review_gate"]
 
 
 def simulation_gate(context: Mapping[str, Any]) -> GateResult:
