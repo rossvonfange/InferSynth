@@ -373,12 +373,22 @@ class TestDeterminism:
 # --------------------------------------------------------------------------
 
 
+class _SpreadScorer:
+    """Deterministic scorer with deliberate spread. The original fixture
+    manufactured spread from opamp-gain-inverting lacking a behavioral model
+    (StructuralScorer 0 vs 1), which stopped being true once its behavior.py
+    landed — the ambiguity signal must not depend on catalog model coverage."""
+
+    def score(self, chain, catalog):
+        return 0.0 if any("x4" in key for key in chain.cells) else 1.0
+
+
 class TestVarianceResolution:
     def test_variance_emits_resolution_request(self):
         cat = Catalog.load(CORE)
-        # "amplifier gain stage" matches inverting (no model, score 0) +
-        # non-inverting + x4 (models, score 1) -> score spread -> variance
-        res = match(one_req("amplifier gain stage", req_id="SYS.1"), cat)
+        # three amplifier cells claim "amplifier gain stage"; the stub scorer
+        # manufactures score spread -> variance -> ResolutionRequest
+        res = match(one_req("amplifier gain stage", req_id="SYS.1"), cat, scorer=_SpreadScorer())
         assert len(res.resolution_requests) == 1
         rr = res.resolution_requests[0]
         assert rr.requirement_id == "SYS.1"
