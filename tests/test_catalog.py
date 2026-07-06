@@ -204,7 +204,49 @@ class TestSchemaV1GoldenCells:
         assert set(catalog.cells) == {
             "opamp-gain-noninverting@0.1.0",
             "opamp-gain-x4-noninverting@0.1.0",
+            "conn-sensor-4wire@0.1.0",
+            "conn-power-2pin@0.1.0",
+            "conn-output-header@0.1.0",
+            "decoupling@0.1.0",
         }
+
+
+class TestSeedStructuralCells:
+    """SEED_PLAN.md sec 2: structural-only L0 cells (connectors + decoupling).
+
+    Each asserts strict-clean loading and that the cell's golden netlist
+    parses via the same reader :func:`infersynth.mcp_server.tools.run_gates`
+    uses for the netlist-partition-equivalence gate.
+    """
+
+    @pytest.mark.parametrize(
+        "cell_name,expected_nets",
+        [
+            (
+                "conn-sensor-4wire",
+                {"/EXC_P", "/SENSE_P", "/SENSE_N", "/EXC_N"},
+            ),
+            ("conn-power-2pin", {"/VIN", "/GND"}),
+            ("conn-output-header", {"/OUT", "/REF", "/GND", "/SHIELD"}),
+            ("decoupling", {"/VCC", "/GND"}),
+        ],
+    )
+    def test_loads_strict_clean_and_golden_netlist_parses(self, cell_name, expected_nets):
+        from infersynth.mcp_server.tools import _parse_golden_netlist
+
+        cell_dir = GOLDEN_CATALOG / cell_name
+        cell = load_cell(cell_dir)  # strict by default
+        assert cell.name == cell_name
+        assert cell.depth["level"] == "L0"
+        golden_name = cell.verification["golden_netlist"]
+        partition = _parse_golden_netlist((cell_dir / golden_name).read_text())
+        assert set(partition) == expected_nets
+        assert all(partition[net] for net in partition)  # every net has >=1 pin
+
+    def test_decoupling_binding_format_hint(self):
+        cell = load_cell(GOLDEN_CATALOG / "decoupling")
+        assert cell.bindings == {"C1": "c_farads"}
+        assert cell.binding_formats == {"C1": "capacitance"}
 
 
 class TestStrictMode:
@@ -292,6 +334,42 @@ class TestBindingsSection:
     def test_non_string_expression_rejected(self, tmp_path):
         cell_dir = write_cell(tmp_path, "c1", params=self.GAIN, bindings={"R1": 1000})
         with pytest.raises(CellPackageError, match="must be an expression string"):
+            load_cell(cell_dir)
+
+    def test_mapping_form_with_format_hint(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            params=self.GAIN,
+            bindings={"C1": {"expr": "gain * 10", "format": "capacitance"}},
+        )
+        cell = load_cell(cell_dir)
+        assert cell.bindings == {"C1": "gain * 10"}
+        assert cell.binding_formats == {"C1": "capacitance"}
+
+    def test_mapping_form_without_format_hint(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path, "c1", params=self.GAIN, bindings={"R1": {"expr": "gain * 10"}}
+        )
+        cell = load_cell(cell_dir)
+        assert cell.bindings == {"R1": "gain * 10"}
+        assert cell.binding_formats == {}
+
+    def test_mapping_form_unknown_key_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            params=self.GAIN,
+            bindings={"R1": {"expr": "gain * 10", "units": "ohms"}},
+        )
+        with pytest.raises(CellPackageError, match=r"unknown key\(s\)"):
+            load_cell(cell_dir)
+
+    def test_mapping_form_missing_expr_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path, "c1", params=self.GAIN, bindings={"R1": {"format": "capacitance"}}
+        )
+        with pytest.raises(CellPackageError, match="requires a string 'expr'"):
             load_cell(cell_dir)
 
 

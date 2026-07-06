@@ -149,7 +149,18 @@ def test_unclassifiable_with_modal_warns_but_prose_does_not():
 
 def test_vocabulary_is_generated_from_catalog():
     vocab = Vocabulary.from_catalog(Catalog.load(REPO_CATALOG))
-    assert vocab.keywords() == ["amplifier gain stage", "non-inverting amplifier"]
+    assert vocab.keywords() == [
+        "4-wire sensor input",
+        "amplifier gain stage",
+        "bypass capacitor",
+        "decoupling",
+        "non-inverting amplifier",
+        "output connector",
+        "output header",
+        "power connector",
+        "power input connector",
+        "sensor connector",
+    ]
     keys = [e.cell_key for e in vocab.entries]
     assert keys == sorted(keys)
     x4 = next(e for e in vocab.entries if "x4" in e.cell_name)
