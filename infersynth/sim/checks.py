@@ -11,6 +11,10 @@ The three helpers requested by the sim-gate v0 spec:
 * :func:`clipped_within` — every sample of a signal lies within ``[lo, hi]``.
 * :func:`settles_to` — a signal holds ``value`` (±tol) after ``after_step``.
 
+Plus, added for the inverting-topology cells:
+
+* :func:`inverted` — ``out`` is phase-inverted (anti-correlated) w.r.t. ``in``.
+
 All arithmetic is plain ``float`` math; no ``random``/``time`` (SELECTION.md §8).
 """
 
@@ -23,6 +27,7 @@ __all__ = [
     "Check",
     "amplitude_ratio",
     "clipped_within",
+    "inverted",
     "settles_to",
 ]
 
@@ -123,3 +128,47 @@ def settles_to(sig: str, value: float, tol: float, after_step: int) -> Check:
         )
 
     return Check(name=f"settles_to({sig})", fn=fn)
+
+
+def inverted(in_sig: str, out_sig: str, max_correlation: float = -0.9) -> Check:
+    """Assert ``out_sig`` is phase-inverted (anti-correlated) w.r.t. ``in_sig``.
+
+    Computes the Pearson correlation coefficient between the two mean-centered
+    traces (a whole-trace, deterministic sign/covariance measure — not a
+    per-sample sign flip, which would be fragile around zero-crossings and
+    rail-clipped flats). The check passes when the correlation is at or below
+    ``max_correlation`` (a negative number close to -1.0): the two signals
+    consistently move in opposite directions, which is what "inverted about a
+    reference" means for a periodic stimulus such as a sine sweep.
+
+    A flat (zero-variance) trace on either side fails explicitly rather than
+    dividing by zero.
+    """
+
+    def fn(traces: Traces) -> tuple[bool, str]:
+        miss = _require(traces, in_sig, out_sig)
+        if miss:
+            return False, miss
+        xs = traces[in_sig]
+        ys = traces[out_sig]
+        if len(xs) != len(ys) or not xs:
+            return False, f"{in_sig!r} and {out_sig!r} traces have mismatched/zero length"
+        mean_x = sum(xs) / len(xs)
+        mean_y = sum(ys) / len(ys)
+        dx = [x - mean_x for x in xs]
+        dy = [y - mean_y for y in ys]
+        cov = sum(a * b for a, b in zip(dx, dy, strict=True))
+        var_x = sum(a * a for a in dx)
+        var_y = sum(b * b for b in dy)
+        if var_x == 0.0 or var_y == 0.0:
+            return False, (
+                f"{in_sig!r} or {out_sig!r} is flat (zero variance); cannot measure correlation"
+            )
+        correlation = cov / (var_x * var_y) ** 0.5
+        ok = correlation <= max_correlation
+        return ok, (
+            f"correlation({in_sig}, {out_sig}) = {correlation:.6g} "
+            f"vs required <= {max_correlation:g}"
+        )
+
+    return Check(name=f"inverted({in_sig}->{out_sig})", fn=fn)
