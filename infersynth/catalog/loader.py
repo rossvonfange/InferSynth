@@ -3,18 +3,27 @@
 A cell package is a directory:
 
     <cell-dir>/
-        cell.yaml           # sections: manifest, idioms, selection, depth
+        cell.yaml           # sections below
         fragment.kicad_sch  # existence-checked only for now
         model/              # SystemC-AMS model (existence-checked)
         testbench/          # stimulus + expected results (existence-checked)
 
-``cell.yaml`` sections:
+``cell.yaml`` sections (schema v1, BUILD_PLAN WP1):
 
 * ``manifest``: name, version, description, provenance, license
 * ``idioms``: keywords (list[str]), params (name -> {type, range|allowed, ...}),
   disambiguation (freeform; presence waives idiom collisions, see catalog.py)
+* ``ports``: name -> {direction: in|out|inout|passive,
+  kind: electrical|power|digital}
+* ``bindings``: fragment ref -> arithmetic expression string over idiom params
+  (grammar: infersynth.bind.expr)
+* ``verification``: golden_netlist (filename relative to the cell dir;
+  must exist)
 * ``selection``: freeform mapping (stub — the v2 scoring engine's input)
 * ``depth``: level (L0|L1|L2) + layout_assumptions (required for L1/L2)
+
+Strictness: by default (``strict=True``) unknown top-level sections are
+validation errors; ``strict=False`` keeps the old tolerance and ignores them.
 """
 
 from __future__ import annotations
@@ -25,11 +34,24 @@ from typing import Any
 
 import yaml
 
+from infersynth.ir import PortDirection, PortKind
+
 __all__ = ["CellPackage", "CellPackageError", "load_cell"]
 
 DEPTH_LEVELS = ("L0", "L1", "L2")
 _MANIFEST_KEYS = ("name", "version", "description", "provenance", "license")
 _PARAM_TYPES = ("int", "float", "str", "bool")
+_PORT_DIRECTIONS = tuple(d.value for d in PortDirection)
+_PORT_KINDS = tuple(k.value for k in PortKind)
+_KNOWN_SECTIONS = (
+    "manifest",
+    "idioms",
+    "ports",
+    "bindings",
+    "verification",
+    "selection",
+    "depth",
+)
 
 
 class CellPackageError(ValueError):
@@ -56,6 +78,12 @@ class CellPackage:
     idioms: dict[str, Any]
     selection: dict[str, Any]
     depth: dict[str, Any] = field(default_factory=lambda: {"level": "L0"})
+    #: port name -> {direction, kind} (values normalized, defaults applied)
+    ports: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: fragment ref -> binding expression string
+    bindings: dict[str, str] = field(default_factory=dict)
+    #: verification metadata (golden_netlist, ...)
+    verification: dict[str, Any] = field(default_factory=dict)
 
     @property
     def key(self) -> str:
@@ -113,9 +141,99 @@ def _validate_idiom_params(params: Any, diags: list[str]) -> None:
             diags.append(f"{where}: 'range' and 'allowed' are mutually exclusive")
 
 
-def load_cell(cell_dir: str | Path) -> CellPackage:
+def _validate_ports(ports: Any, diags: list[str]) -> dict[str, dict[str, str]]:
+    """Validate the ``ports`` section; return normalized name -> {direction, kind}."""
+    normalized: dict[str, dict[str, str]] = {}
+    if ports is None:
+        return normalized
+    if not isinstance(ports, dict):
+        diags.append("cell.yaml: ports must be a mapping of port name -> {direction, kind}")
+        return normalized
+    for pname, spec in sorted(ports.items()):
+        where = f"cell.yaml: ports.{pname}"
+        if not isinstance(spec, dict):
+            diags.append(f"{where} must be a mapping with 'direction' and 'kind'")
+            continue
+        unknown = sorted(set(spec) - {"direction", "kind"})
+        if unknown:
+            diags.append(f"{where}: unknown key(s) {unknown}")
+        direction = spec.get("direction", PortDirection.PASSIVE.value)
+        if direction not in _PORT_DIRECTIONS:
+            diags.append(
+                f"{where}.direction: illegal direction {direction!r} "
+                f"(expected one of {_PORT_DIRECTIONS})"
+            )
+            continue
+        kind = spec.get("kind", PortKind.ELECTRICAL.value)
+        if kind not in _PORT_KINDS:
+            diags.append(f"{where}.kind: illegal kind {kind!r} (expected one of {_PORT_KINDS})")
+            continue
+        normalized[str(pname)] = {"direction": direction, "kind": kind}
+    return normalized
+
+
+def _validate_bindings(bindings: Any, idioms: dict[str, Any], diags: list[str]) -> dict[str, str]:
+    """Validate the ``bindings`` section (WP1 cross-checks).
+
+    Every expression must parse under the restricted grammar and every free
+    name in it must be a declared idiom param.
+    """
+    from infersynth.bind.expr import BindingError, free_names
+
+    normalized: dict[str, str] = {}
+    if bindings is None:
+        return normalized
+    if not isinstance(bindings, dict):
+        diags.append("cell.yaml: bindings must be a mapping of ref -> expression string")
+        return normalized
+    declared = set((idioms.get("params") or {}) if isinstance(idioms, dict) else {})
+    for ref, expr in sorted(bindings.items()):
+        where = f"cell.yaml: bindings.{ref}"
+        if not isinstance(expr, str):
+            diags.append(f"{where} must be an expression string, got {type(expr).__name__}")
+            continue
+        try:
+            names = free_names(expr)
+        except BindingError as exc:
+            diags.append(f"{where}: {exc}")
+            continue
+        for name in sorted(names - declared):
+            diags.append(
+                f"{where}: expression references {name!r}, "
+                "which is not a declared idiom param"
+            )
+        normalized[str(ref)] = expr
+    return normalized
+
+
+def _validate_verification(
+    verification: Any, cell_dir: Path, diags: list[str]
+) -> dict[str, Any]:
+    """Validate the ``verification`` section; golden_netlist file must exist."""
+    if verification is None:
+        return {}
+    if not isinstance(verification, dict):
+        diags.append("cell.yaml: verification must be a mapping")
+        return {}
+    golden = verification.get("golden_netlist")
+    if golden is not None:
+        if not isinstance(golden, str) or not golden:
+            diags.append(
+                "cell.yaml: verification.golden_netlist must be a non-empty filename string"
+            )
+        elif not (cell_dir / golden).is_file():
+            diags.append(
+                f"cell.yaml: verification.golden_netlist file {golden!r} "
+                "does not exist in the cell directory"
+            )
+    return verification
+
+
+def load_cell(cell_dir: str | Path, strict: bool = True) -> CellPackage:
     """Load and validate one cell package directory.
 
+    With ``strict=True`` (the default) unknown top-level cell.yaml sections
+    are validation errors; ``strict=False`` keeps the old tolerance.
     Raises :class:`CellPackageError` with all collected diagnostics on failure.
     """
     path = Path(cell_dir)
@@ -147,6 +265,13 @@ def load_cell(cell_dir: str | Path) -> CellPackage:
         if section not in data:
             diags.append(f"cell.yaml: missing required section {section!r}")
 
+    if strict:
+        for section in sorted(set(data) - set(_KNOWN_SECTIONS)):
+            diags.append(
+                f"cell.yaml: unknown top-level section {section!r} "
+                f"(known sections: {_KNOWN_SECTIONS}; pass strict=False to tolerate)"
+            )
+
     manifest = _check_mapping(data.get("manifest"), "cell.yaml: manifest", diags)
     for key in _MANIFEST_KEYS:
         if not manifest.get(key):
@@ -163,6 +288,10 @@ def load_cell(cell_dir: str | Path) -> CellPackage:
     ):
         diags.append("cell.yaml: idioms.keywords must be a non-empty list of strings")
     _validate_idiom_params(idioms.get("params"), diags)
+
+    ports = _validate_ports(data.get("ports"), diags)
+    bindings = _validate_bindings(data.get("bindings"), idioms, diags)
+    verification = _validate_verification(data.get("verification"), path, diags)
 
     selection = _check_mapping(data.get("selection"), "cell.yaml: selection", diags)
 
@@ -188,4 +317,7 @@ def load_cell(cell_dir: str | Path) -> CellPackage:
         idioms=idioms,
         selection=selection,
         depth=depth,
+        ports=ports,
+        bindings=bindings,
+        verification=verification,
     )

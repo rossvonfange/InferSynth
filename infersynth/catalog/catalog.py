@@ -86,11 +86,12 @@ class Catalog:
         self.cells: dict[str, CellPackage] = {}  # key: name@version
 
     @classmethod
-    def load(cls, catalog_dir: str | Path) -> Catalog:
+    def load(cls, catalog_dir: str | Path, strict: bool = True) -> Catalog:
         """Load every cell directory under *catalog_dir* (one level deep).
 
-        Raises :class:`CatalogError` collecting all per-cell and dataset-level
-        diagnostics.
+        ``strict`` is forwarded to :func:`load_cell` (unknown cell.yaml
+        sections are errors by default). Raises :class:`CatalogError`
+        collecting all per-cell and dataset-level diagnostics.
         """
         root = Path(catalog_dir)
         if not root.is_dir():
@@ -99,7 +100,7 @@ class Catalog:
         diags: list[str] = []
         for entry in sorted(p for p in root.iterdir() if p.is_dir()):
             try:
-                cell = load_cell(entry)
+                cell = load_cell(entry, strict=strict)
             except CellPackageError as exc:
                 diags.extend(f"{entry.name}: {d}" for d in exc.diagnostics)
                 continue
