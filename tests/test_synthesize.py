@@ -119,6 +119,37 @@ class TestDisambiguationPrimacy:
         assert "core/opamp-gain-inverting@0.1.0" in considered
 
 
+class TestNetflowThreading:
+    def test_pins_win_synthesis(self, tmp_path: Path) -> None:
+        frd = tmp_path / "pinned.md"
+        frd.write_text(
+            "- The board shall include an amplifier gain stage with gain of 4.\n",
+            encoding="utf-8",
+        )
+        # without the pin this unqualified amp resolves to non-inverting; the pin
+        # forces the inverting cell to be the synthesized winner (primacy defeat).
+        result = synthesize(
+            frd, CORE, tmp_path / "build", profile="prototype",
+            pins={"R-1": "core/opamp-gain-inverting"},
+        )
+        cells = {i.cell_key for i in result.instantiated}
+        assert "core/opamp-gain-inverting@0.1.0" in cells
+        assert "core/opamp-gain-noninverting@0.1.0" not in cells
+
+    def test_feeds_rendered_in_report(self, demo_frd: Path, tmp_path: Path) -> None:
+        from infersynth.spec import FeedEdge
+
+        out = tmp_path / "build"
+        result = synthesize(
+            demo_frd, CORE, out, profile="prototype",
+            feeds=(FeedEdge("R-2", "R-5", "IN2"),),
+        )
+        report = result.report_path.read_text(encoding="utf-8")
+        assert "Declared feeds (not yet wired)" in report
+        assert "`R-2` → `R-5.IN2`" in report
+        assert result.feeds == (FeedEdge("R-2", "R-5", "IN2"),)
+
+
 class TestSynthesizeCli:
     def test_cli_exit_codes(self, demo_frd: Path, tmp_path: Path) -> None:
         rc = main(

@@ -39,6 +39,7 @@ from infersynth.match import MatchResult, match
 from infersynth.match.allocation import AllocationTable
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
+from infersynth.spec import FeedEdge
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class SynthesisResult:
     match_result: MatchResult
     trace_path: Path | None
     report_path: Path
+    #: NETFLOW declared dataflow edges, pass-through (rendered, not yet wired).
+    feeds: tuple[FeedEdge, ...] = ()
 
     @property
     def all_decided(self) -> bool:
@@ -126,6 +129,8 @@ def synthesize(
     allocations: AllocationTable | None = None,
     knobs: MatchKnobs | None = None,
     endpoints: dict[str, EndpointSpec] | None = None,
+    pins: dict[str, str] | None = None,
+    feeds: tuple[FeedEdge, ...] = (),
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -134,6 +139,11 @@ def synthesize(
     :func:`infersynth.spec.load_spec`; ``None`` for any of them keeps
     ``match``'s own defaults (no allocation scoping, lenient/strict-idiom
     knobs, trivial single-cell chains).
+
+    ``pins`` (NETFLOW ``[use:]``) thread into :func:`infersynth.match.match` so
+    a pinned requirement's cell becomes its winner. ``feeds`` (NETFLOW declared
+    dataflow) are pass-through in this stage: carried onto the result and
+    rendered under "Declared feeds (not yet wired)" — no wiring is emitted.
     """
     frd = Path(frd)
     out_dir = Path(out_dir)
@@ -141,7 +151,9 @@ def synthesize(
     prof = load_profile(profile)
 
     reqset, _lint_diags = lint_path(frd, catalog_dir=catalog_dir)
-    mres = match(reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints)
+    mres = match(
+        reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints, pins=pins
+    )
     decision = decide(mres, catalog, prof, lockfile=lockfile)
 
     design_name = name or _sanitize_instname(frd.stem)
@@ -199,6 +211,7 @@ def synthesize(
         match_result=mres,
         trace_path=trace_path,
         report_path=out_dir / "SYNTHESIS.md",
+        feeds=tuple(feeds),
     )
     result.report_path.write_text(_render_report(result, catalog), encoding="utf-8")
     return result
@@ -261,5 +274,18 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
         cell = catalog.cells.get(inst.cell_key)
         ports = ", ".join(sorted(cell.ports)) if cell is not None and cell.ports else "?"
         lines.append(f"- `{inst.instname}` ({inst.cell_key}): {ports}")
+    if result.feeds:
+        lines += [
+            "",
+            "## Declared feeds (not yet wired)",
+            "",
+            "Requirement-level dataflow declared via NETFLOW `feeds` (spec or FRD "
+            "`[feeds:]` pragma). Pass-through only at this stage — the wiring "
+            "plan stage consumes these; synthesis does not draw them yet:",
+            "",
+        ]
+        for edge in result.feeds:
+            dst = f"{edge.dst}.{edge.dst_port}" if edge.dst_port else edge.dst
+            lines.append(f"- `{edge.src}` → `{dst}`")
     lines.append("")
     return "\n".join(lines)
