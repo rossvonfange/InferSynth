@@ -1,5 +1,8 @@
 """CLI smoke tests."""
 
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -31,3 +34,28 @@ def test_version():
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
+
+
+def test_lsp_command_missing_extra_exits_2():
+    """``infersynth lsp`` without the ``lsp`` extra installed exits 2 with a
+    hint (mirrors the ``panel`` command's lazy-import pattern)."""
+    script = textwrap.dedent(
+        """
+        import sys
+
+        class Block:
+            def find_spec(self, name, *a, **k):
+                if name == "pygls" or name.startswith("pygls."):
+                    raise ImportError("blocked for test")
+                return None
+
+        sys.meta_path.insert(0, Block())
+        from infersynth.cli import main
+        sys.exit(main(["lsp"]))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert result.returncode == 2
+    assert "infersynth[lsp]" in result.stderr

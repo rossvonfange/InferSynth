@@ -80,6 +80,21 @@ def _cmd_panel(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lsp(args: argparse.Namespace) -> int:
+    from infersynth.lsp import run
+
+    try:
+        run(catalog_dir=args.catalog)
+    except ImportError as exc:
+        print(
+            f"infersynth lsp: missing lsp extra dependencies ({exc}); "
+            "install with `pip install infersynth[lsp]`",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="infersynth",
@@ -124,6 +139,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_panel.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1)")
     p_panel.add_argument("--port", type=int, default=8765, help="bind port (default: 8765)")
     p_panel.set_defaults(func=_cmd_panel)
+
+    p_lsp = sub.add_parser(
+        "lsp", help="run the language server over stdio (squiggles, completions, hover)"
+    )
+    p_lsp.add_argument(
+        "--catalog",
+        default=None,
+        metavar="DIR",
+        help="catalog directory for vocabulary features (grammar-only lint when omitted)",
+    )
+    p_lsp.set_defaults(func=_cmd_lsp)
 
     return parser
 
