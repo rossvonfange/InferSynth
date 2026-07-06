@@ -1,0 +1,84 @@
+# Summing/offset op-amp stage — SEED_PLAN.md sec 2 signal-path cell (Ch 4,
+# op-amp golden rules). Fragment authored via KiCAD-MCP-Server, same
+# conventions as the golden cells: hierarchical labels coincident with pin
+# endpoints, 1.27mm grid, ${IS.*} value slot.
+#
+# Topology: inverting 2-input summer. IN1 -> R1 -> node FB; IN2 -> R2 ->
+# FB; R3 (feedback) spans FB -> OUT; the op-amp's non-inverting input (+)
+# ties directly to the REF port (sets the output's DC offset/reference,
+# hence "offset stage" in the name) rather than to GND, so the stage can
+# sum two weighted inputs onto an arbitrary reference level. Output =
+# REF - (Rf/R1)*IN1 - (Rf/R2)*IN2.
+manifest:
+  name: summing-offset-stage
+  version: "0.1.0"
+  description: Inverting 2-input summing amplifier with a settable reference offset.
+  provenance: "AoE 3rd ed. ch. 4 topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The gain/summing element is an op-amp IC; feedback/input resistors don't
+  # define the cell's technology.
+  technology: analog-ic
+
+ports:
+  IN1: {direction: in, kind: electrical}
+  IN2: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  REF: {direction: in, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - summing amplifier
+    - offset stage
+  # SELECTION.md sec 3: gain stage is the amplification tag verbatim
+  # ("gain, buffering, drive"). Disambiguation against
+  # opamp-gain-inverting is not added here per the authoring instructions
+  # (add only if catalog validate flags a collision); this cell's keywords
+  # don't share a token with opamp-gain-inverting's ("inverting amplifier",
+  # "amplifier gain stage").
+  functions:
+    - amplification
+  params:
+    w1:
+      type: float
+      range: [0.01, 100.0]
+      default: 1.0
+    w2:
+      type: float
+      range: [0.01, 100.0]
+      default: 1.0
+    rf_ohms:
+      type: float
+      range: [1.0e+3, 1.0e+6]
+      default: 100000.0
+
+bindings:
+  R1: "rf_ohms / w1"
+  R2: "rf_ohms / w2"
+  R3: "rf_ohms"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (general-purpose op-amp + 3 resistors at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 1.05, qty1k: 0.42}
+  area_mm2: 45
+  power_mw: 5
+  part_count: 4
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
