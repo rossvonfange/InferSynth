@@ -24,6 +24,7 @@ from infersynth.gates.report_io import (
     report_to_dict,
 )
 from infersynth.gates.runner import GateReport, GateResult, GateRunner, GateStatus
+from infersynth.gates.simulation import run_cell_simulation, simulation_cell_gate
 from infersynth.gates.stubs import render_review_gate, simulation_gate
 from infersynth.gates.triage import ErcViolation, TriageOutcome, TriagePolicy
 
@@ -53,7 +54,9 @@ __all__ = [
     "partition_equivalence_gate",
     "render_review_gate",
     "report_to_dict",
+    "run_cell_simulation",
     "run_erc",
+    "simulation_cell_gate",
     "simulation_gate",
 ]
 
