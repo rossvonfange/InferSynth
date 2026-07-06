@@ -23,6 +23,7 @@ from infersynth.gates.harness import generate_harness
 from infersynth.gates.netlist import export_netlist, parse_golden_netlist
 from infersynth.gates.netlist_equiv import partition_equivalence_gate
 from infersynth.gates.runner import GateReport, GateResult
+from infersynth.gates.simulation import simulation_cell_gate
 from infersynth.gates.triage import TriagePolicy
 
 __all__ = ["run_cell_gates", "run_design_gates"]
@@ -66,6 +67,10 @@ def run_cell_gates(
         else:
             golden = parse_golden_netlist(pkg.path / golden_name)
             report.results.append(_netlist_gate(result.root, golden))
+
+    # Behavioral simulation gate (sim-gate v0): real for cells that carry a
+    # model + testbench, loudly SKIPPED for structural-only cells.
+    report.results.append(simulation_cell_gate(pkg))
     return report
 
 

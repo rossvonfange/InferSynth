@@ -11,22 +11,36 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from infersynth.catalog.loader import CellPackage
 from infersynth.gates.runner import GateResult
 
 __all__ = ["simulation_gate", "render_review_gate"]
 
 
 def simulation_gate(context: Mapping[str, Any]) -> GateResult:
-    """Emitted SystemC-AMS top vs. the spec's testbench (DESIGN section 7 gate 1).
+    """Simulation gate (DESIGN section 7 gate 1), two tiers.
 
     Context keys:
 
-    * ``elaborated``: the ElaboratedDesign to emit
-    * ``testbench``: the spec's testbench artifacts
+    * ``cell``: a :class:`~infersynth.catalog.loader.CellPackage` (or a cell
+      directory path) — runs the **behavioral sim-gate v0** tier
+      (:func:`infersynth.gates.simulation.simulation_cell_gate`): a real,
+      deterministic pure-Python run for cells carrying ``model/behavior.py`` +
+      ``testbench/tb.py`` (DESIGN.md §4 graceful-bootstrap tier).
+    * ``elaborated`` / ``testbench``: the SystemC-AMS end-state tier — emit the
+      top-level, compile, run, compare. Not yet wired; SKIPPED loudly.
 
-    Will emit the SystemC-AMS top-level, compile, run, and compare against
-    expected results. SKIPPED (loudly) where the toolchain is not installed.
+    With neither key present, SKIPPED (loudly): a skipped gate is unverified.
     """
+    from infersynth.gates.simulation import simulation_cell_gate
+
+    cell = context.get("cell")
+    if cell is not None:
+        if not isinstance(cell, CellPackage):
+            from infersynth.catalog.loader import load_cell
+
+            cell = load_cell(cell)
+        return simulation_cell_gate(cell)
     return GateResult.skipped(
         "simulation", "not implemented: SystemC-AMS emission/toolchain not wired up in this pass"
     )
