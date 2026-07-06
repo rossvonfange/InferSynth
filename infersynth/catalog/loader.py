@@ -45,9 +45,15 @@ A cell package is a directory:
   gated absorption menu. ``template`` is a path string only; its target is
   NOT required to exist yet (template emission is v3 scope per SELECTION.md's
   Adoption order — "Now" only reserves and schema-checks this section).
-* ``embedding.json`` (optional, cell-dir sibling file, reserved — unused by
-  v1): ``{model_id, dim, vector}`` cache of the cell's capability-text
-  embedding (SELECTION.md sec 4). ``len(vector) == dim`` is enforced.
+* ``embedding.json`` (optional, cell-dir sibling file): ``{model_id, dim,
+  vector, text_hash}`` cache of the cell's capability-text embedding
+  (SELECTION.md sec 4, WP-M2). ``len(vector) == dim`` is enforced.
+  ``text_hash`` (optional at the schema level, always emitted by
+  ``infersynth embed``) is the sha256 of the exact capability-text recipe
+  used to produce ``vector`` — see ``infersynth.match.embed.capability_text``
+  — and is how the matcher's semantic-recall layer detects a stale cache
+  (model changed, or the cell's description/keywords/functions changed since
+  the vector was generated) without re-embedding anything itself.
 
 Strictness: by default (``strict=True``) unknown top-level sections are
 validation errors; ``strict=False`` keeps the old tolerance and ignores them.
@@ -101,7 +107,7 @@ _COST_KEYS = {
     "sourcing_risk",
 }
 _ABSORBS_KEYS = {"function", "consumes", "template"}
-_EMBEDDING_KEYS = {"model_id", "dim", "vector"}
+_EMBEDDING_KEYS = {"model_id", "dim", "vector", "text_hash"}
 
 #: sentinel distinguishing "caller passed no taxonomy argument" (auto-discover)
 #: from "caller explicitly passed taxonomy=None" (catalog confirmed there is
@@ -470,7 +476,7 @@ def _validate_absorbs(absorbs: Any, diags: list[str]) -> list[dict[str, Any]]:
 
 def _validate_embedding(cell_dir: Path, diags: list[str]) -> dict[str, Any] | None:
     """Validate the optional cell-dir ``embedding.json`` sidecar (SELECTION.md
-    sec 4; schema-checked, unused by v1)."""
+    sec 4, WP-M2)."""
     emb_path = cell_dir / "embedding.json"
     if not emb_path.is_file():
         return None
@@ -499,6 +505,9 @@ def _validate_embedding(cell_dir: Path, diags: list[str]) -> dict[str, Any] | No
         diags.append("embedding.json: vector must be a list of numbers")
     elif isinstance(dim, int) and not isinstance(dim, bool) and len(vector) != dim:
         diags.append(f"embedding.json: len(vector)={len(vector)} != dim={dim}")
+    text_hash = data.get("text_hash")
+    if text_hash is not None and (not isinstance(text_hash, str) or not text_hash):
+        diags.append("embedding.json: text_hash must be a non-empty string when present")
     return data
 
 

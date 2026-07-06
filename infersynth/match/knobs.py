@@ -18,10 +18,11 @@ __all__ = ["MatchKnobs"]
 class MatchKnobs:
     """Policy profile + effort budget for one matcher run.
 
-    * ``recall`` — SELECTION §4 recall profile. ``strict`` = idioms only
-      (the only layer that exists in WP-M1). ``semantic`` widens the net with
-      the embeddings layer, which is WP-M2 scope — requesting it raises
-      ``NotImplementedError`` naming WP-M2 rather than silently degrading.
+    * ``recall`` — SELECTION §4 recall profile. ``strict`` = idioms only.
+      ``semantic`` additionally runs the Layer-2 embeddings recall (WP-M2) on
+      the idiom-recall residual (RECON_HARVEST §2 cheapest-first ladder: a
+      requirement that already has in-scope idiom candidates never reaches
+      this layer).
     * ``allocation`` — SELECTION §2 allocation profile. Under ``strict`` a
       requirement with candidates but no allocation in its ancestry emits a
       ``frd.unallocated`` WARN; under ``lenient`` (the default) that
@@ -37,12 +38,23 @@ class MatchKnobs:
       number of candidate-cell expansion steps per requirement before
       enumeration stops. Raising it only lets a run explore more; it never
       changes the ordering or the answer for chains already within budget.
+    * ``semantic_threshold`` — SELECTION §4 "catalog-configured floor": the
+      minimum cosine similarity for Layer-2 embeddings recall to surface a
+      cell. ``0.75`` is a conservative default chosen so the
+      zero-dependency :class:`~infersynth.match.embed.HashingBackend`
+      placeholder (character-ngram overlap, not real semantic similarity)
+      does not flood the residual with loosely-related cells; raising it
+      narrows the net, lowering it widens it — either way the answer for
+      candidates already above/below the floor never changes (SELECTION §8:
+      effort/profile knobs change how much surfaces, never which answer a
+      deterministic layer reaches for a fixed threshold).
     """
 
     recall: str = "strict"
     allocation: str = "lenient"
     variance_threshold: float = 0.0
     expansion_budget: int = 64
+    semantic_threshold: float = 0.75
 
     def __post_init__(self) -> None:
         if self.recall not in ("strict", "semantic"):
@@ -56,4 +68,8 @@ class MatchKnobs:
         if self.variance_threshold < 0:
             raise ValueError(
                 f"variance_threshold must be >= 0, got {self.variance_threshold}"
+            )
+        if not (0.0 <= self.semantic_threshold <= 1.0):
+            raise ValueError(
+                f"semantic_threshold must be in [0.0, 1.0], got {self.semantic_threshold}"
             )

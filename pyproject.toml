@@ -32,6 +32,9 @@ mcp = [
 lsp = [
     "pygls>=1.3,<2",
 ]
+embeddings = [
+    "sentence-transformers>=2.2",
+]
 
 [project.scripts]
 infersynth = "infersynth.cli:main"

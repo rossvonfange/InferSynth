@@ -1,18 +1,22 @@
-"""The WP-M1 matcher: a pure function of (requirements, catalog, allocations, knobs).
+"""The matcher: a pure function of (requirements, catalog, allocations, knobs).
 
-Pipeline (SELECTION §4 order, minus the WP-M2 semantic layer):
+Pipeline (SELECTION §4 order):
 
-    idiom recall  ->  allocation scoping  ->  endpoint propagation
+    idiom recall  ->  semantic recall (residual only, WP-M2)
+                  ->  allocation scoping  ->  endpoint propagation
                   ->  chain scoring        ->  ensemble-variance triage
 
 ``match`` is deterministic: for a fixed ``(RequirementSet, Catalog, allocations,
-knobs, endpoints, scorer)`` it returns byte-identical output (SELECTION §8) —
-requirements iterate in document order, every candidate/chain list is sorted,
-and nothing consults the wall clock or a random source. Unresolved residuals
-never become guesses: they surface as typed diagnostics through the existing
-lint ``Diagnostic`` codes (``frd.no-primitive`` / ``frd.allocation-empty`` /
-``frd.unallocated`` / ``frd.ambiguous``) and, for ensemble underspecification,
-a typed :class:`~infersynth.match.resolution.ResolutionRequest`.
+knobs, endpoints, scorer, embedding_backend)`` it returns byte-identical output
+(SELECTION §8) — requirements iterate in document order, every candidate/chain
+list is sorted, and nothing consults the wall clock or a random source.
+Unresolved residuals never become guesses: they surface as typed diagnostics
+through the existing lint ``Diagnostic`` codes (``frd.no-primitive`` /
+``frd.allocation-empty`` / ``frd.unallocated`` / ``frd.ambiguous`` /
+``frd.embedding-stale``) and, for ensemble underspecification, a typed
+:class:`~infersynth.match.resolution.ResolutionRequest`; a requirement that
+receives semantic candidates discloses it via ``frd.semantic-recall`` (INFO,
+SELECTION §7 disclosure).
 """
 
 from __future__ import annotations
@@ -28,10 +32,11 @@ from infersynth.match.allocation import (
     AllocationTable,
     resolve_scope,
 )
+from infersynth.match.embed import EmbeddingBackend, HashingBackend, build_semantic_index
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec, propagate_chains
 from infersynth.match.provenance import Candidate, CandidateChain
-from infersynth.match.recall import idiom_recall
+from infersynth.match.recall import idiom_recall, semantic_recall
 from infersynth.match.resolution import (
     ChainScorer,
     ResolutionRequest,
@@ -96,26 +101,32 @@ def match(
     knobs: MatchKnobs | None = None,
     endpoints: dict[str, EndpointSpec] | None = None,
     scorer: ChainScorer | None = None,
+    embedding_backend: EmbeddingBackend | None = None,
 ) -> MatchResult:
-    """Match a requirement set against a catalog (WP-M1).
+    """Match a requirement set against a catalog.
 
     * ``allocations`` — an :class:`AllocationTable`
       (:func:`infersynth.match.allocation.allocations_from_spec` builds one
       from a spec's ``allocations:`` key). ``None`` ⇒ all libraries compete.
-    * ``knobs`` — :class:`MatchKnobs`. ``recall="semantic"`` raises
-      ``NotImplementedError`` (WP-M2). ``None`` ⇒ defaults.
+    * ``knobs`` — :class:`MatchKnobs`. ``recall="semantic"`` additionally runs
+      Layer-2 embeddings recall (WP-M2) on each requirement's idiom-recall
+      residual. ``None`` ⇒ defaults (``recall="strict"``, idioms only).
     * ``endpoints`` — per-requirement :class:`EndpointSpec` for bidirectional
       propagation; a requirement absent from the mapping (or ``endpoints=None``)
       gets trivial single-cell chains.
     * ``scorer`` — a :class:`ChainScorer`; defaults to the structural proxy
       (no simulation). Pass ``SimGateScorer()`` for the WP-S1 sim-backed score.
+    * ``embedding_backend`` — the :class:`~infersynth.match.embed.EmbeddingBackend`
+      used to embed requirement text for semantic recall; ignored when
+      ``knobs.recall != "semantic"``. Defaults to
+      :class:`~infersynth.match.embed.HashingBackend`. **Must be the same
+      backend/model the catalog's cached ``embedding.json`` vectors were
+      generated with** — a mismatch is a hard, run-stopping ``ValueError``
+      (SELECTION §4/§8: pinned model + pinned text is what makes semantic
+      candidate sets reproducible; see
+      :func:`infersynth.match.embed.build_semantic_index`).
     """
     knobs = knobs or MatchKnobs()
-    if knobs.recall == "semantic":
-        raise NotImplementedError(
-            "recall='semantic' is the embeddings layer (WP-M2 — embeddings recall "
-            "layer); WP-M1 ships idiom recall only. Use recall='strict'."
-        )
     allocations = allocations or AllocationTable()
     endpoints = endpoints or {}
     scorer = scorer or StructuralScorer()
@@ -128,9 +139,56 @@ def match(
     diagnostics: list[Diagnostic] = []
     requests: list[ResolutionRequest] = []
 
+    # --- Layer 2 setup (semantic recall is opt-in, off in "strict") ---------
+    semantic_index = None
+    backend: EmbeddingBackend | None = None
+    if knobs.recall == "semantic":
+        backend = embedding_backend or HashingBackend()
+        semantic_index = build_semantic_index(catalog, backend)  # raises on model mismatch
+        if semantic_index.stale:
+            stale_list = ", ".join(f"{s.cell_key} ({s.reason})" for s in semantic_index.stale)
+            diagnostics.append(
+                Diagnostic(
+                    file="<catalog>",
+                    range=Range.on_line(0),
+                    severity=Severity.WARNING,
+                    code="frd.embedding-stale",
+                    message=(
+                        "stale embedding.json cache excluded from semantic recall "
+                        f"(capability text changed since last embed; re-run "
+                        f"`infersynth embed`): {stale_list}"
+                    ),
+                    source="infersynth-match",
+                )
+            )
+
     for req in reqset.requirements():  # lintable reqs, document order
         scope = resolve_scope(req, allocations, all_libraries)
         in_scope, out_of_scope = idiom_recall(req, vocab, catalog, scope)
+
+        # --- Layer 2: semantic recall on the idiom residual only -----------
+        # RECON_HARVEST §2 cheapest-first ladder: semantic recall fires only
+        # when idiom recall (Layer 1) surfaced zero in-scope candidates.
+        semantic_candidates: tuple[Candidate, ...] = ()
+        if not in_scope and semantic_index is not None and backend is not None:
+            req_vector = backend.embed([req.text])[0]
+            semantic_candidates = semantic_recall(
+                req, req_vector, semantic_index, scope, knobs.semantic_threshold
+            )
+            if semantic_candidates:
+                in_scope = semantic_candidates
+                evidence = ", ".join(f"{c.cell_key}={c.surfaced_by}" for c in semantic_candidates)
+                diagnostics.append(
+                    _diag(
+                        req,
+                        Severity.INFO,
+                        "frd.semantic-recall",
+                        f"idiom recall found nothing in scope; semantic recall surfaced "
+                        f"{len(semantic_candidates)} candidate(s): {evidence} "
+                        "(SELECTION §4 layer-2 disclosure)",
+                    )
+                )
+
         candidates[req.id] = in_scope
 
         # --- residual diagnostics (never guesses) ---------------------------

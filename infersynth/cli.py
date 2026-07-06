@@ -1,8 +1,10 @@
 """``infersynth`` CLI (DESIGN.md section 9, deliverable 1).
 
-Subcommands: ``elaborate``, ``gates``, ``lint``, ``catalog validate``. The
-first two are stubs pending the spec-loading and synthesis pipeline; ``lint``
-runs the FRD lint engine; ``catalog validate`` runs the catalog validator.
+Subcommands: ``elaborate``, ``gates``, ``lint``, ``catalog validate``,
+``embed``. ``elaborate`` is a stub pending the spec-loading pipeline;
+``lint`` runs the FRD lint engine; ``catalog validate`` runs the catalog
+validator; ``embed`` (re)generates every cell's ``embedding.json`` semantic-
+recall cache (WP-M2, :mod:`infersynth.match.embed`).
 """
 
 from __future__ import annotations
@@ -94,6 +96,46 @@ def _cmd_capture(args: argparse.Namespace) -> int:
         print(f"infersynth capture: {exc}", file=sys.stderr)
         return 1
     return 0 if result.gate_report.ok else 1
+
+
+def _cmd_embed(args: argparse.Namespace) -> int:
+    import json
+
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.match.embed import backend_from_name, capability_text, embed_cell, text_hash
+
+    try:
+        backend = backend_from_name(args.backend)
+    except ValueError as exc:
+        print(f"infersynth embed: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        catalog = Catalog.load(args.catalog)
+    except CatalogError as exc:
+        print(f"infersynth embed: {exc}", file=sys.stderr)
+        return 1
+
+    # Staleness report (loud, before overwriting): every cell that already had
+    # an embedding.json is flagged when its cached model_id/text_hash doesn't
+    # match this run (model changed, or capability text moved on) -- it is
+    # about to be regenerated below, never silently left stale.
+    for key in sorted(catalog.cells):
+        cell = catalog.cells[key]
+        emb = cell.embedding
+        if emb is None:
+            continue
+        if emb.get("model_id") != backend.model_id:
+            print(f"stale: {key} (model_id changed) -- regenerating", file=sys.stderr)
+        elif emb.get("text_hash") != text_hash(capability_text(cell)):
+            print(f"stale: {key} (capability text changed) -- regenerating", file=sys.stderr)
+
+    for key in sorted(catalog.cells):
+        cell = catalog.cells[key]
+        data = embed_cell(cell, backend)
+        (cell.path / "embedding.json").write_text(json.dumps(data, indent=2) + "\n")
+        print(f"embedded {key}  (dim={data['dim']}, model={data['model_id']})")
+    return 0
 
 
 def _cmd_catalog_validate(args: argparse.Namespace) -> int:
@@ -396,6 +438,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="overwrite an existing cell directory of the same name"
     )
     p_capture.set_defaults(func=_cmd_capture)
+
+    p_embed = sub.add_parser(
+        "embed",
+        help="(re)generate each cell's embedding.json cache for semantic recall (WP-M2)",
+    )
+    p_embed.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_embed.add_argument(
+        "--backend",
+        choices=("hashing", "st"),
+        default="hashing",
+        help="embedding backend: 'hashing' (deterministic placeholder, default, no extra "
+        "deps) or 'st' (sentence-transformers, requires `pip install infersynth[embeddings]`)",
+    )
+    p_embed.set_defaults(func=_cmd_embed)
 
     p_cat = sub.add_parser("catalog", help="catalog operations")
     cat_sub = p_cat.add_subparsers(dest="catalog_command", required=True)
