@@ -54,6 +54,14 @@ A cell package is a directory:
   — and is how the matcher's semantic-recall layer detects a stale cache
   (model changed, or the cell's description/keywords/functions changed since
   the vector was generated) without re-embedding anything itself.
+* ``interfaces`` (NETFLOW.md "Interfaces (bundles)", optional): group name ->
+  ``{type, role, map}`` claiming this cell exposes a standard bundle (uart,
+  spi, i2c, can_phy, ...). Validated against the catalog's
+  ``interfaces.yaml`` the same way ``idioms.functions`` validates against
+  ``taxonomy.yaml``: when there is no ``interfaces.yaml`` in the catalog at
+  all, any ``interfaces:`` claim is rejected. See
+  ``infersynth.catalog.interfaces.validate_cell_interfaces`` for the full
+  rule set.
 
 Strictness: by default (``strict=True``) unknown top-level sections are
 validation errors; ``strict=False`` keeps the old tolerance and ignores them.
@@ -96,6 +104,7 @@ _KNOWN_SECTIONS = (
     "costs",
     "capacity",
     "absorbs",
+    "interfaces",
 )
 _COST_KEYS = {
     "bom",
@@ -159,6 +168,9 @@ class CellPackage:
     #: {model_id, dim, vector} cache, if embedding.json is present (sec 4;
     #: reserved, unused by v1)
     embedding: dict[str, Any] | None = None
+    #: group name -> InterfaceGroup (NETFLOW.md "Interfaces (bundles)");
+    #: empty when the cell declares no ``interfaces:`` section.
+    interfaces: dict[str, Any] = field(default_factory=dict)
 
     @property
     def bare_key(self) -> str:
@@ -530,8 +542,26 @@ def _discover_taxonomy(cell_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def _discover_interfaces(cell_dir: Path) -> dict[str, Any] | None:
+    """Best-effort ``catalog/interfaces.yaml`` discovery, mirroring
+    :func:`_discover_taxonomy` exactly (same ancestor-walk, same "absent file
+    is not an error, just no interface claims allowed" contract) for a
+    standalone :func:`load_cell` call made outside :class:`~infersynth.
+    catalog.Catalog`."""
+    from infersynth.catalog.interfaces import load_interfaces
+
+    for ancestor in list(cell_dir.resolve().parents)[:4]:
+        candidate = ancestor / "interfaces.yaml"
+        if candidate.is_file():
+            return load_interfaces(candidate)
+    return None
+
+
 def load_cell(
-    cell_dir: str | Path, strict: bool = True, taxonomy: Any = _UNSET
+    cell_dir: str | Path,
+    strict: bool = True,
+    taxonomy: Any = _UNSET,
+    interfaces: Any = _UNSET,
 ) -> CellPackage:
     """Load and validate one cell package directory.
 
@@ -606,6 +636,16 @@ def load_cell(
     bindings, binding_formats = _validate_bindings(data.get("bindings"), idioms, diags)
     verification = _validate_verification(data.get("verification"), path, diags)
 
+    from infersynth.catalog.interfaces import validate_cell_interfaces
+
+    if interfaces is _UNSET:
+        resolved_interfaces = _discover_interfaces(path)
+    else:
+        resolved_interfaces = interfaces
+    interface_groups = validate_cell_interfaces(
+        data.get("interfaces"), resolved_interfaces, ports, diags
+    )
+
     selection = _check_mapping(data.get("selection"), "cell.yaml: selection", diags)
     costs = _validate_costs(data.get("costs"), strict, diags)
     capacity = _validate_capacity(data.get("capacity"), diags)
@@ -642,4 +682,5 @@ def load_cell(
         capacity=capacity,
         absorbs=absorbs,
         embedding=embedding,
+        interfaces=interface_groups,
     )
