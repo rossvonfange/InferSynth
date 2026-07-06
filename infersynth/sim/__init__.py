@@ -12,7 +12,7 @@ future SystemC-AMS kernel, and docs/SIM.md for the behavior/testbench contracts.
 
 from __future__ import annotations
 
-from infersynth.sim.checks import Check, amplitude_ratio, clipped_within, settles_to
+from infersynth.sim.checks import Check, amplitude_ratio, clipped_within, inverted, settles_to
 from infersynth.sim.kernel import (
     Block,
     BoundBlock,
@@ -36,6 +36,7 @@ __all__ = [
     "Testbench",
     "amplitude_ratio",
     "clipped_within",
+    "inverted",
     "settles_to",
     "topological_order",
 ]

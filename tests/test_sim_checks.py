@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from infersynth.sim import amplitude_ratio, clipped_within, settles_to
+import math
+
+from infersynth.sim import amplitude_ratio, clipped_within, inverted, settles_to
 
 
 def test_amplitude_ratio_pass():
@@ -51,3 +53,34 @@ def test_settles_to_no_tail():
     ok, detail = settles_to("v", 5.0, 0.1, after_step=10).evaluate({"v": [5.0, 5.0]})
     assert not ok
     assert "no samples after" in detail
+
+
+def _sine(n: int = 100, scale: float = 1.0, phase: float = 0.0) -> list[float]:
+    return [scale * math.sin(2.0 * math.pi * i / n + phase) for i in range(n)]
+
+
+def test_inverted_pass_on_perfect_antiphase():
+    xs = _sine(scale=1.0)
+    ys = _sine(scale=-4.0)  # perfectly anti-correlated, scaled by -4
+    ok, detail = inverted("vin", "vout").evaluate({"vin": xs, "vout": ys})
+    assert ok
+    assert "correlation" in detail
+
+
+def test_inverted_fails_on_same_phase():
+    xs = _sine(scale=1.0)
+    ys = _sine(scale=4.0)  # in-phase, not inverted
+    ok, _ = inverted("vin", "vout").evaluate({"vin": xs, "vout": ys})
+    assert not ok
+
+
+def test_inverted_flat_signal_fails():
+    ok, detail = inverted("vin", "vout").evaluate({"vin": [1.0, 1.0], "vout": [-1.0, -2.0]})
+    assert not ok
+    assert "flat" in detail
+
+
+def test_inverted_missing_signal():
+    ok, detail = inverted("vin", "vout").evaluate({"vin": [1.0]})
+    assert not ok
+    assert "not in traces" in detail
