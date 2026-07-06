@@ -93,7 +93,7 @@ def test_completion_items_contain_keyword_and_param():
     assert "non-inverting amplifier" in labels
     assert "gain" in labels
     gain_item = next(i for i in items if i.label == "gain" and i.is_param)
-    assert gain_item.detail.startswith("opamp-gain-noninverting@")
+    assert gain_item.detail.startswith("core/opamp-gain-noninverting@")
     assert "1.0..1000.0" in gain_item.documentation
 
 

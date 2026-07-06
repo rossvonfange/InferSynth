@@ -7,7 +7,7 @@ import pytest
 from infersynth.bind import BindingError, bind_cell, evaluate, free_names
 from infersynth.catalog import load_cell
 
-CATALOG = Path(__file__).parent.parent / "catalog"
+CATALOG = Path(__file__).parent.parent / "catalog" / "core"
 
 
 class TestEvaluate:

@@ -18,8 +18,8 @@ import pytest
 from infersynth.mcp_server import tools
 
 CATALOG = Path(__file__).parent.parent / "catalog"
-CELL1 = CATALOG / "opamp-gain-noninverting"
-CELL2 = CATALOG / "opamp-gain-x4-noninverting"
+CELL1 = CATALOG / "core" / "opamp-gain-noninverting"
+CELL2 = CATALOG / "core" / "opamp-gain-x4-noninverting"
 FRD = Path(__file__).parent.parent / "examples" / "frds" / "01_hobbyist_garden_monitor.md"
 
 
@@ -66,7 +66,11 @@ class TestCatalogSearch:
     def test_amplifier_finds_both_cells(self):
         result = tools.catalog_search("amplifier", catalog_dir=str(CATALOG))
         keys = {r["cell"] for r in result["results"]}
-        assert keys == {"opamp-gain-noninverting@0.1.0", "opamp-gain-x4-noninverting@0.1.0"}
+        assert keys == {
+            "core/opamp-gain-noninverting@0.1.0",
+            "core/opamp-gain-x4-noninverting@0.1.0",
+        }
+        assert all(r["library"] == "core" for r in result["results"])
 
     def test_no_match_returns_empty(self):
         result = tools.catalog_search("nonexistent-widget-xyz", catalog_dir=str(CATALOG))
@@ -81,7 +85,7 @@ class TestCatalogValidate:
     def test_ok(self):
         result = tools.catalog_validate(str(CATALOG))
         assert result["ok"] is True
-        assert "opamp-gain-noninverting@0.1.0" in result["cells"]
+        assert "core/opamp-gain-noninverting@0.1.0" in result["cells"]
 
     def test_fail_reports_diagnostics(self, tmp_path):
         (tmp_path / "broken").mkdir()
