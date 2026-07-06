@@ -30,6 +30,7 @@ import infersynth.decide.trace as decide_trace
 from infersynth.bind import BindingError
 from infersynth.catalog import Catalog, CellPackage
 from infersynth.compile_kicad.emit import instantiate, new_design
+from infersynth.compile_kicad.wiring import emit_wiring
 from infersynth.decide.engine import Decision, decide
 from infersynth.decide.lockfile import Lockfile
 from infersynth.decide.profiles import WeightProfile, load_profile
@@ -39,6 +40,7 @@ from infersynth.match import MatchResult, match
 from infersynth.match.allocation import AllocationTable
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
+from infersynth.netflow.plan import WiringPlan, build_plan
 from infersynth.spec import FeedEdge
 
 
@@ -71,6 +73,10 @@ class SynthesisResult:
     report_path: Path
     #: NETFLOW declared dataflow edges, pass-through (rendered, not yet wired).
     feeds: tuple[FeedEdge, ...] = ()
+    #: the inferred net set applied to the design (None when --no-wiring)
+    wiring_plan: WiringPlan | None = None
+    #: full-hierarchy ERC summary line when verify ran; None otherwise
+    erc_summary: str | None = None
 
     @property
     def all_decided(self) -> bool:
@@ -131,6 +137,8 @@ def synthesize(
     endpoints: dict[str, EndpointSpec] | None = None,
     pins: dict[str, str] | None = None,
     feeds: tuple[FeedEdge, ...] = (),
+    wiring: bool = True,
+    verify: bool = False,
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -196,6 +204,25 @@ def synthesize(
                 )
             )
 
+    # NETFLOW stage 1: infer the net set (rails always; intra-chain when a
+    # winner chain has >1 cell) and emit it onto the design.
+    wiring_plan: WiringPlan | None = None
+    if wiring and instantiated:
+        winner_chains = {
+            rid: outcome.winner.chain.cells
+            for rid, outcome in decision.outcomes.items()
+            if outcome.winner is not None
+        }
+        wiring_plan = build_plan(instantiated, winner_chains, catalog)
+        emit_wiring(root, wiring_plan, instantiated, catalog)
+
+    # Full-hierarchy ERC is REPORTED, never hard-gated here (NETFLOW build
+    # order 5 / docs note): connectivity errors stop being expected only when
+    # the plan is clean (no diagnostics, no unwired signal ports).
+    erc_summary: str | None = None
+    if verify and wiring_plan is not None:
+        erc_summary = _erc_report(root, wiring_plan)
+
     trace_path: Path | None = None
     if write_trace:
         trace = decide_trace.build(mres, catalog, decision)
@@ -212,9 +239,31 @@ def synthesize(
         trace_path=trace_path,
         report_path=out_dir / "SYNTHESIS.md",
         feeds=tuple(feeds),
+        wiring_plan=wiring_plan,
+        erc_summary=erc_summary,
     )
     result.report_path.write_text(_render_report(result, catalog), encoding="utf-8")
     return result
+
+
+def _erc_report(root: Path, plan: WiringPlan) -> str:
+    """Run full-hierarchy ERC on *root* via the existing erc gate; summarize.
+
+    Report-only (NETFLOW build order 5: do not hard-gate synthesize exit on ERC
+    yet). When the plan is not clean (diagnostics / unwired signal ports), the
+    residual connectivity errors are expected and loudly noted; a clean plan is
+    where full-hierarchy ERC-zero becomes a real target.
+    """
+    from infersynth.gates.erc import erc_gate
+
+    result = erc_gate({"schematic_path": root})
+    header = result.diagnostics[0] if result.diagnostics else result.status.value
+    verdict = (
+        "clean plan (ERC-zero is a real target)"
+        if plan.clean
+        else "residual (unwired signal ports / diagnostics remain — errors expected)"
+    )
+    return f"[{result.status.value}] {header} — {verdict}"
 
 
 def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
@@ -262,12 +311,42 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
             "See `selection_trace.json` for diagnostics; unresolved gaps are "
             "catalog-gap / ambiguity signals to resolve between runs.",
         ]
+    plan = result.wiring_plan
+    if plan is None:
+        lines += [
+            "",
+            "## Wiring worklist (wiring skipped: --no-wiring)",
+            "",
+            "Inter-cell nets were not drawn. Connect the instantiated sheets' "
+            "ports (hierarchical labels) per your intent; full-hierarchy ERC "
+            "will fail on connectivity until wired:",
+            "",
+        ]
+        for inst in result.instantiated:
+            cell = catalog.cells.get(inst.cell_key)
+            ports = ", ".join(sorted(cell.ports)) if cell is not None and cell.ports else "?"
+            lines.append(f"- `{inst.instname}` ({inst.cell_key}): {ports}")
+        lines.append("")
+        return "\n".join(lines)
+
+    # --- NETFLOW stage 1: wired nets + diagnostics + residual worklist ---
+    lines += ["", "## Wired nets (NETFLOW stage 1 — inferred)", ""]
+    if plan.nets:
+        lines += ["| net | kind | driven | members |", "|---|---|---|---|"]
+        for net in plan.nets:
+            members = ", ".join(f"{i}.{p}" for i, p in net.members)
+            driven = "yes" if net.driven else "**NO (undriven)**"
+            lines.append(f"| `{net.name}` | {net.kind} | {driven} | {members} |")
+    else:
+        lines.append("(none — no power ports and no multi-cell chains to wire)")
+
+    if plan.diagnostics:
+        lines += ["", "## Wiring diagnostics (ask-rather-than-guess)", ""]
+        lines += [f"- {d}" for d in plan.diagnostics]
+
     lines += [
         "",
-        "## Wiring worklist (inter-cell nets are not drawn by synthesis)",
-        "",
-        "Connect the instantiated sheets' ports (hierarchical labels) per your "
-        "intent; full-hierarchy ERC will fail on connectivity until wired:",
+        "## Residual wiring worklist (unwired signal ports)",
         "",
     ]
     for inst in result.instantiated:
@@ -287,5 +366,24 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
         for edge in result.feeds:
             dst = f"{edge.dst}.{edge.dst_port}" if edge.dst_port else edge.dst
             lines.append(f"- `{edge.src}` → `{dst}`")
+    if plan.unwired_signal_ports:
+        lines += [
+            "These signal ports were not uniquely inferable (independent "
+            "single-cell winners, or ambiguous pairings) and remain for "
+            "declared feeds / hand-wiring; their hierarchical labels stay "
+            "orphaned in the child sheet until connected:",
+            "",
+        ]
+        lines += [f"- `{inst}`.{port}" for inst, port in plan.unwired_signal_ports]
+    else:
+        lines.append("(none — every signal port is wired)")
+
+    if result.erc_summary is not None:
+        lines += [
+            "",
+            "## Full-hierarchy ERC (reported, not gated)",
+            "",
+            f"{result.erc_summary}",
+        ]
     lines.append("")
     return "\n".join(lines)

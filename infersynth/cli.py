@@ -217,6 +217,8 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
             allocations=allocations,
             knobs=knobs,
             endpoints=endpoints,
+            wiring=not args.no_wiring,
+            verify=not args.no_wiring,
         )
     except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
         print(f"infersynth synthesize: {exc}", file=sys.stderr)
@@ -230,6 +232,17 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
         print(f"  ! skipped {rid}/{key}: {reason}")
     for rid, status in sorted(result.decision.undecided().items()):
         print(f"  ? undecided {rid}: {status}")
+    if result.wiring_plan is not None:
+        plan = result.wiring_plan
+        print(
+            f"wiring: {len(plan.rails)} rail net(s), {len(plan.signals)} signal net(s), "
+            f"{len(plan.diagnostics)} diagnostic(s), "
+            f"{len(plan.unwired_signal_ports)} unwired signal port(s)"
+        )
+        for d in plan.diagnostics:
+            print(f"  ! {d}")
+    if result.erc_summary is not None:
+        print(f"erc: {result.erc_summary}")
     if result.trace_path is not None:
         print(f"trace: {result.trace_path}")
     print(f"report: {result.report_path}")
@@ -505,6 +518,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_syn.add_argument("--lockfile", metavar="F", help="costs.lock.json to override cell costs")
     p_syn.add_argument(
         "--no-trace", action="store_true", help="skip writing selection_trace.json"
+    )
+    p_syn.add_argument(
+        "--no-wiring",
+        action="store_true",
+        help="skip NETFLOW wiring (rails + intra-chain nets) and its ERC report",
     )
     p_syn.set_defaults(func=_cmd_synthesize)
 
