@@ -24,7 +24,11 @@ def test_catalog_validate_fail(tmp_path, capsys):
 
 def test_stub_subcommands_exit_2():
     assert main(["elaborate", "spec.py"]) == 2
-    assert main(["gates", "design.kicad_sch"]) == 2
+
+
+def test_gates_requires_a_target():
+    # `gates` is now real; with neither --cell nor --design it usage-errors (2).
+    assert main(["gates"]) == 2
 
 
 def test_version():
