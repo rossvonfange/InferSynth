@@ -248,6 +248,23 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
         return 2
 
     asyncio.run(run_stdio(catalog_dir=args.catalog))
+def _cmd_tcl(args: argparse.Namespace) -> int:
+    try:
+        from infersynth.tclsh import main as tcl_main
+    except ImportError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    tcl_argv: list[str] = []
+    if args.catalog is not None:
+        tcl_argv += ["--catalog", args.catalog]
+    if args.command is not None:
+        tcl_argv += ["-c", args.command]
+    if args.script is not None:
+        tcl_argv.append(args.script)
+    return tcl_main(tcl_argv)
+
+
 def _cmd_lsp(args: argparse.Namespace) -> int:
     from infersynth.lsp import run
 
@@ -390,6 +407,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="catalog directory for vocabulary features (grammar-only lint when omitted)",
     )
     p_lsp.set_defaults(func=_cmd_lsp)
+
+    p_tcl = sub.add_parser(
+        "tcl", help="Tcl scripting shell over the tool handlers (the EDA-native surface)"
+    )
+    p_tcl.add_argument(
+        "--catalog", default=None, metavar="DIR", help="default catalog dir injected into calls"
+    )
+    p_tcl.add_argument("-c", dest="command", metavar="CMD", help="run one Tcl command and exit")
+    p_tcl.add_argument("script", nargs="?", help="Tcl script file to source and exit")
+    p_tcl.set_defaults(func=_cmd_tcl)
 
     return parser
 
