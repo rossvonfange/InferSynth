@@ -1,0 +1,58 @@
+# Unity-gain voltage follower — SEED_PLAN.md sec 2 signal-path cell.
+# Fragment authored via KiCAD-MCP-Server, same conventions as the golden
+# cells (opamp-gain-noninverting): hierarchical labels coincident with pin
+# endpoints, 1.27mm grid. There is no gain-setting resistor here — the
+# feedback path is direct wire-equivalent: the output pin (U1/1) carries the
+# hierarchical label "OUT" (the port), and the inverting input (U1/4) carries
+# a plain sheet-local label also named "OUT" so it joins the same net inside
+# this sheet (same net-by-name-match convention the gain cells use for their
+# "FB" node — here the joined net simply *is* the port net, since there is no
+# resistor to sit between them).
+manifest:
+  name: unity-buffer
+  version: "0.1.0"
+  description: Unity-gain voltage follower (op-amp buffer, output tied directly to inverting input).
+  provenance: "AoE 3rd ed. ch. 4 topology (reference only; re-expressed from scratch)"
+  license: GPL-3.0-or-later
+  # Same reasoning as the other op-amp cells: the active device defines the
+  # technology even though there are no passives at all here.
+  technology: analog-ic
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  VEE: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - unity buffer
+    - voltage follower
+  # SELECTION.md sec 3: a buffer is squarely "gain, buffering, drive".
+  functions:
+    - amplification
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  opamp_class: general_purpose
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (a single general-purpose op-amp at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering).
+costs:
+  bom: {qty1: 0.55, qty1k: 0.20}
+  area_mm2: 25
+  power_mw: 5
+  part_count: 1
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

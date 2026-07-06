@@ -1,0 +1,70 @@
+# Shunt voltage reference (TL431-class) — SEED_PLAN.md sec 2 precision cell.
+# Fragment authored via KiCAD-MCP-Server, same conventions as the golden
+# cells: hierarchical labels coincident with pin endpoints, 1.27mm grid,
+# ${IS.*} value slot. Fixed 2.5V configuration: REF tied directly to the
+# cathode (no feedback divider), so R1 alone sets the shunt bias current
+# from VIN down to the ~2.5V VREF node.
+#
+# Binding format-hint note (see decoupling/cell.yaml's own note on this
+# extension): the loader's format-hint mechanism is presentational metadata
+# only, and the one hint the catalog has actually adopted so far is
+# `capacitance` (for farads-valued bindings, vs the ohms-style default). This
+# cell's binding is ohms-valued like the opamp cells' feedback/gain
+# resistors, so it uses the same bare-expression-string default rather than
+# inventing an unadopted `format: resistance` hint.
+manifest:
+  name: vref-shunt
+  version: "0.1.0"
+  description: Shunt voltage reference (TL431-class, fixed 2.5V, REF tied to cathode).
+  provenance: "AoE 3rd ed. ch. 9 topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The TL431 is a 3-terminal programmable shunt regulator IC; the bias
+  # resistor is passive but doesn't define the cell's technology, same
+  # reasoning as the op-amp cells.
+  technology: analog-ic
+
+ports:
+  VIN: {direction: in, kind: power}
+  VREF: {direction: out, kind: electrical}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - voltage reference
+    - precision reference
+  # SELECTION.md sec 3: a voltage reference generates/conditions a rail
+  # level -> regulation ("rail generation and conditioning").
+  functions:
+    - regulation
+  params:
+    r_bias_ohms:
+      type: float
+      range: [100.0, 100000.0]
+      default: 1000.0
+
+bindings:
+  R1: "r_bias_ohms"
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Reference_Voltage:TL431DBZ
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (a TL431-class shunt reference + 1 bias resistor at
+# typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.25, qty1k: 0.08}
+  area_mm2: 15
+  power_mw: 20
+  part_count: 2
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
