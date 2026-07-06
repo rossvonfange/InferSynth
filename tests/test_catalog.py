@@ -9,6 +9,7 @@ from infersynth.catalog import Catalog, CatalogError, CellPackageError, load_cel
 
 FIXTURES = Path(__file__).parent / "fixtures" / "catalog"
 GOLDEN_CATALOG = Path(__file__).parent.parent / "catalog"
+CORE_CATALOG = GOLDEN_CATALOG / "core"
 
 
 def write_cell(
@@ -24,6 +25,9 @@ def write_cell(
     ports=None,
     bindings=None,
     verification=None,
+    functions=None,
+    technology=None,
+    embedding_json=None,
 ) -> Path:
     """Write a minimal valid cell package under *root*."""
     cell_dir = root / (dirname or name)
@@ -35,14 +39,19 @@ def write_cell(
         idioms["params"] = params
     if disambiguation is not None:
         idioms["disambiguation"] = disambiguation
+    if functions is not None:
+        idioms["functions"] = list(functions)
+    manifest = {
+        "name": name,
+        "version": version,
+        "description": f"test cell {name}",
+        "provenance": "synthetic test fixture",
+        "license": "GPL-3.0-or-later",
+    }
+    if technology is not None:
+        manifest["technology"] = technology
     data = {
-        "manifest": {
-            "name": name,
-            "version": version,
-            "description": f"test cell {name}",
-            "provenance": "synthetic test fixture",
-            "license": "GPL-3.0-or-later",
-        },
+        "manifest": manifest,
         "idioms": idioms,
         "selection": {},
         "depth": depth or {"level": "L0"},
@@ -55,6 +64,10 @@ def write_cell(
         data["verification"] = verification
     data.update(extra_sections or {})
     (cell_dir / "cell.yaml").write_text(yaml.safe_dump(data))
+    if embedding_json is not None:
+        import json
+
+        (cell_dir / "embedding.json").write_text(json.dumps(embedding_json))
     return cell_dir
 
 
@@ -186,7 +199,7 @@ class TestSchemaV1GoldenCells:
         "cell_name", ["opamp-gain-noninverting", "opamp-gain-x4-noninverting"]
     )
     def test_round_trip_matches_yaml(self, cell_name):
-        cell_dir = GOLDEN_CATALOG / cell_name
+        cell_dir = CORE_CATALOG / cell_name
         raw = yaml.safe_load((cell_dir / "cell.yaml").read_text())
         cell = load_cell(cell_dir)  # strict by default
         assert cell.name == raw["manifest"]["name"]
@@ -202,13 +215,14 @@ class TestSchemaV1GoldenCells:
     def test_golden_catalog_validates_strict(self):
         catalog = Catalog.load(GOLDEN_CATALOG)
         assert set(catalog.cells) == {
-            "opamp-gain-noninverting@0.1.0",
-            "opamp-gain-x4-noninverting@0.1.0",
-            "conn-sensor-4wire@0.1.0",
-            "conn-power-2pin@0.1.0",
-            "conn-output-header@0.1.0",
-            "decoupling@0.1.0",
+            "core/opamp-gain-noninverting@0.1.0",
+            "core/opamp-gain-x4-noninverting@0.1.0",
+            "core/conn-sensor-4wire@0.1.0",
+            "core/conn-power-2pin@0.1.0",
+            "core/conn-output-header@0.1.0",
+            "core/decoupling@0.1.0",
         }
+        assert all(c.library == "core" for c in catalog.cells.values())
 
 
 class TestSeedStructuralCells:
@@ -234,7 +248,7 @@ class TestSeedStructuralCells:
     def test_loads_strict_clean_and_golden_netlist_parses(self, cell_name, expected_nets):
         from infersynth.mcp_server.tools import _parse_golden_netlist
 
-        cell_dir = GOLDEN_CATALOG / cell_name
+        cell_dir = CORE_CATALOG / cell_name
         cell = load_cell(cell_dir)  # strict by default
         assert cell.name == cell_name
         assert cell.depth["level"] == "L0"
@@ -244,7 +258,7 @@ class TestSeedStructuralCells:
         assert all(partition[net] for net in partition)  # every net has >=1 pin
 
     def test_decoupling_binding_format_hint(self):
-        cell = load_cell(GOLDEN_CATALOG / "decoupling")
+        cell = load_cell(CORE_CATALOG / "decoupling")
         assert cell.bindings == {"C1": "c_farads"}
         assert cell.binding_formats == {"C1": "capacitance"}
 
@@ -388,3 +402,287 @@ class TestVerificationSection:
         (cell_dir / "golden_netlist.txt").write_text("/OUT: R1/1\n")
         cell = load_cell(cell_dir)
         assert cell.verification == {"golden_netlist": "golden_netlist.txt"}
+
+
+def _write_library(root: Path, name: str, tier: str = "official") -> Path:
+    lib_dir = root / name
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    (lib_dir / "library.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": name,
+                "description": f"{name} library",
+                "tier": tier,
+                "maintainer": "test",
+            }
+        )
+    )
+    return lib_dir
+
+
+class TestLibraryLayout:
+    """SELECTION.md sec 1: two-level (library/cell) layout, plus the flat
+    layout kept for tests/fixtures — detected by presence of library.yaml."""
+
+    def test_real_catalog_is_two_level_under_core(self):
+        catalog = Catalog.load(GOLDEN_CATALOG)
+        cell = catalog.cells["core/decoupling@0.1.0"]
+        assert cell.library == "core"
+        assert cell.key == "core/decoupling@0.1.0"
+        assert cell.bare_key == "decoupling@0.1.0"
+
+    def test_flat_layout_still_loads_with_no_library(self, tmp_path):
+        write_cell(tmp_path, "c1")
+        catalog = Catalog.load(tmp_path)
+        cell = catalog.cells["c1@0.1.0"]
+        assert cell.library is None
+        assert cell.key == "c1@0.1.0"
+
+    def test_two_level_subdir_without_library_yaml_errors(self, tmp_path):
+        lib = _write_library(tmp_path, "core")
+        write_cell(lib, "c1")
+        (tmp_path / "stray").mkdir()  # a plain dir, no library.yaml
+        with pytest.raises(CatalogError, match="expected library.yaml"):
+            Catalog.load(tmp_path)
+
+    def test_library_yaml_missing_field_rejected(self, tmp_path):
+        lib = tmp_path / "core"
+        lib.mkdir()
+        (lib / "library.yaml").write_text(
+            yaml.safe_dump({"name": "core", "tier": "official"})
+        )
+        write_cell(lib, "c1")
+        with pytest.raises(CatalogError, match="description is required"):
+            Catalog.load(tmp_path)
+
+    def test_library_yaml_bad_tier_rejected(self, tmp_path):
+        lib = _write_library(tmp_path, "core", tier="bogus")
+        write_cell(lib, "c1")
+        with pytest.raises(CatalogError, match="tier must be one of"):
+            Catalog.load(tmp_path)
+
+
+class TestBareNameResolution:
+    """SELECTION.md sec 1: bare name@version resolves iff unambiguous."""
+
+    def _two_libraries(self, tmp_path) -> tuple[Path, Path]:
+        lib_a = _write_library(tmp_path, "core")
+        lib_b = _write_library(tmp_path, "community", tier="community")
+        write_cell(lib_a, "widget")
+        return lib_a, lib_b
+
+    def test_full_key_lookup(self, tmp_path):
+        self._two_libraries(tmp_path)
+        catalog = Catalog.load(tmp_path)
+        assert catalog.get("core/widget@0.1.0").name == "widget"
+
+    def test_bare_key_resolves_when_unambiguous(self, tmp_path):
+        self._two_libraries(tmp_path)
+        catalog = Catalog.load(tmp_path)
+        cell = catalog.get("widget@0.1.0")
+        assert cell.key == "core/widget@0.1.0"
+
+    def test_bare_key_ambiguous_across_libraries_raises(self, tmp_path):
+        lib_a, lib_b = self._two_libraries(tmp_path)
+        write_cell(lib_b, "widget")
+        catalog = Catalog.load(tmp_path)
+        with pytest.raises(CatalogError, match="ambiguous cell reference 'widget@0.1.0'"):
+            catalog.get("widget@0.1.0")
+
+    def test_unknown_ref_raises(self, tmp_path):
+        self._two_libraries(tmp_path)
+        catalog = Catalog.load(tmp_path)
+        with pytest.raises(CatalogError, match="no cell matches"):
+            catalog.get("nope@9.9.9")
+
+
+class TestFunctionsTaxonomy:
+    """SELECTION.md sec 3: idioms.functions validated against taxonomy.yaml."""
+
+    TAXONOMY = {"version": 1, "functions": {"timing": {"desc": "oscillators"}}}
+
+    def test_valid_function_tag_on_real_cell(self):
+        cell = load_cell(CORE_CATALOG / "opamp-gain-noninverting")
+        assert cell.functions == ("amplification",)
+
+    def test_unknown_tag_rejected(self, tmp_path):
+        (tmp_path / "taxonomy.yaml").write_text(yaml.safe_dump(self.TAXONOMY))
+        write_cell(tmp_path, "c1", functions=["nope"])
+        with pytest.raises(CatalogError, match="unknown tag 'nope'"):
+            Catalog.load(tmp_path)
+
+    def test_dotted_refinement_validates_against_root_tag(self, tmp_path):
+        (tmp_path / "taxonomy.yaml").write_text(yaml.safe_dump(self.TAXONOMY))
+        write_cell(tmp_path, "c1", functions=["timing.astable"])
+        catalog = Catalog.load(tmp_path)
+        cell = next(iter(catalog.cells.values()))
+        assert cell.functions == ("timing.astable",)
+
+    def test_no_taxonomy_in_catalog_rejects_functions_claim(self, tmp_path):
+        # A flat fixture-style catalog with no taxonomy.yaml at all.
+        write_cell(tmp_path, "c1", functions=["timing"])
+        with pytest.raises(CatalogError, match="no taxonomy in catalog"):
+            Catalog.load(tmp_path)
+
+    def test_bad_functions_shape_rejected(self, tmp_path):
+        (tmp_path / "taxonomy.yaml").write_text(yaml.safe_dump(self.TAXONOMY))
+        cell_dir = write_cell(tmp_path, "c1")
+        data = yaml.safe_load((cell_dir / "cell.yaml").read_text())
+        data["idioms"]["functions"] = "timing"  # not a list
+        (cell_dir / "cell.yaml").write_text(yaml.safe_dump(data))
+        with pytest.raises(CatalogError, match="idioms.functions must be a list"):
+            Catalog.load(tmp_path)
+
+
+class TestManifestTechnology:
+    def test_valid_technology_accepted(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1", technology="passive")
+        assert load_cell(cell_dir).manifest["technology"] == "passive"
+
+    def test_invalid_technology_rejected(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1", technology="quantum-dot")
+        with pytest.raises(CellPackageError, match="manifest.technology must be one of"):
+            load_cell(cell_dir)
+
+
+class TestCostsSection:
+    """SELECTION.md sec 6: validator-checked, unused by v1."""
+
+    OK = {
+        "bom": {"qty1": 1.0, "qty1k": 0.5},
+        "area_mm2": 10,
+        "power_mw": 1,
+        "part_count": 2,
+        "dev_hours": 0,
+        "production_steps": ["programming"],
+        "sourcing_risk": 1,
+    }
+
+    def test_valid_costs_load(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": self.OK})
+        cell = load_cell(cell_dir)
+        assert cell.costs["area_mm2"] == 10
+        assert cell.costs["bom"]["qty1k"] == 0.5
+
+    def test_unknown_cost_key_rejected_in_strict_mode(self, tmp_path):
+        bad = {**self.OK, "bogus_key": 1}
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": bad})
+        with pytest.raises(CellPackageError, match=r"costs: unknown key\(s\)"):
+            load_cell(cell_dir)
+
+    def test_unknown_cost_key_tolerated_with_strict_false(self, tmp_path):
+        bad = {**self.OK, "bogus_key": 1}
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": bad})
+        assert load_cell(cell_dir, strict=False).name == "c1"
+
+    def test_bad_sourcing_risk_rejected(self, tmp_path):
+        bad = {**self.OK, "sourcing_risk": 7}
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": bad})
+        with pytest.raises(CellPackageError, match="sourcing_risk must be an int in 0..3"):
+            load_cell(cell_dir)
+
+    def test_bad_bom_key_rejected(self, tmp_path):
+        bad = {**self.OK, "bom": {"notqty": 1.0}}
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": bad})
+        with pytest.raises(CellPackageError, match="must match 'qtyN'"):
+            load_cell(cell_dir)
+
+    def test_bad_production_steps_rejected(self, tmp_path):
+        bad = {**self.OK, "production_steps": "programming"}
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"costs": bad})
+        with pytest.raises(CellPackageError, match="production_steps must be a list"):
+            load_cell(cell_dir)
+
+
+class TestReservedSections:
+    """SELECTION.md sec 5: capacity/absorbs — accepted, schema-checked,
+    unused by v1 (the v2 packer consumes them)."""
+
+    def test_capacity_valid(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path, "c1", extra_sections={"capacity": {"timers": 4, "gpio": 12}}
+        )
+        cell = load_cell(cell_dir)
+        assert cell.capacity == {"timers": 4, "gpio": 12}
+
+    def test_capacity_non_int_rejected(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1", extra_sections={"capacity": {"timers": "four"}})
+        with pytest.raises(CellPackageError, match="capacity.timers must be an int"):
+            load_cell(cell_dir)
+
+    def test_absorbs_valid_template_path_need_not_exist(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            extra_sections={
+                "absorbs": [
+                    {
+                        "function": "timing.astable",
+                        "consumes": {"timers": 1, "gpio": 1},
+                        "template": "templates/astable/",
+                    }
+                ]
+            },
+        )
+        cell = load_cell(cell_dir)
+        assert cell.absorbs[0]["template"] == "templates/astable/"
+        # The template path is schema-checked only — its target is not
+        # required to exist (template emission is v3 scope).
+        assert not (cell_dir / "templates" / "astable").exists()
+
+    def test_absorbs_missing_function_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            extra_sections={"absorbs": [{"consumes": {}, "template": "t/"}]},
+        )
+        with pytest.raises(CellPackageError, match=r"absorbs\[0\]\.function"):
+            load_cell(cell_dir)
+
+    def test_absorbs_unknown_key_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            extra_sections={
+                "absorbs": [{"function": "x", "template": "t/", "bogus": 1}]
+            },
+        )
+        with pytest.raises(CellPackageError, match=r"unknown key\(s\)"):
+            load_cell(cell_dir)
+
+
+class TestEmbeddingJson:
+    """SELECTION.md sec 4: {model_id, dim, vector} cache, reserved for v1."""
+
+    def test_valid_embedding_loaded(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path, "c1", embedding_json={"model_id": "m1", "dim": 3, "vector": [0.1, 0.2, 0.3]}
+        )
+        cell = load_cell(cell_dir)
+        assert cell.embedding == {"model_id": "m1", "dim": 3, "vector": [0.1, 0.2, 0.3]}
+
+    def test_absent_embedding_is_none(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1")
+        assert load_cell(cell_dir).embedding is None
+
+    def test_dim_mismatch_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path, "c1", embedding_json={"model_id": "m1", "dim": 4, "vector": [0.1, 0.2, 0.3]}
+        )
+        with pytest.raises(CellPackageError, match=r"len\(vector\)=3 != dim=4"):
+            load_cell(cell_dir)
+
+    def test_invalid_json_rejected(self, tmp_path):
+        cell_dir = write_cell(tmp_path, "c1")
+        (cell_dir / "embedding.json").write_text("{not json")
+        with pytest.raises(CellPackageError, match="invalid JSON"):
+            load_cell(cell_dir)
+
+    def test_unknown_key_rejected(self, tmp_path):
+        cell_dir = write_cell(
+            tmp_path,
+            "c1",
+            embedding_json={"model_id": "m1", "dim": 1, "vector": [0.1], "extra": True},
+        )
+        with pytest.raises(CellPackageError, match=r"unknown key\(s\)"):
+            load_cell(cell_dir)

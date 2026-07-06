@@ -113,6 +113,7 @@ def catalog_list(cells: list[dict[str, Any]], load_errors: list[str]) -> str:
     for c in cells:
         rows.append(
             "<tr>"
+            f'<td class="mono">{_e(c.get("library", ""))}</td>'
             f'<td><a href="/cell/{_e(c["name"])}/{_e(c["version"])}">{_e(c["name"])}</a></td>'
             f'<td class="mono">{_e(c["version"])}</td>'
             f"<td>{_e(c['description'])}</td>"
@@ -121,9 +122,9 @@ def catalog_list(cells: list[dict[str, Any]], load_errors: list[str]) -> str:
             "</tr>"
         )
     table = (
-        "<table><thead><tr><th>Cell</th><th>Version</th><th>Description</th>"
+        "<table><thead><tr><th>Library</th><th>Cell</th><th>Version</th><th>Description</th>"
         "<th>Depth</th><th>Keywords</th></tr></thead><tbody>"
-        + ("".join(rows) if rows else '<tr><td colspan="5" class="muted">no cells loaded</td></tr>')
+        + ("".join(rows) if rows else '<tr><td colspan="6" class="muted">no cells loaded</td></tr>')
         + "</tbody></table>"
     )
     errors_html = ""

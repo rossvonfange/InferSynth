@@ -1,0 +1,54 @@
+# IOB connector cell (SEED_PLAN.md sec 2, structural-only): 2-pin power input.
+# Fragment authored 2026-07-06 via KiCAD-MCP-Server, same conventions as the
+# golden cells (opamp-gain-noninverting): hierarchical labels coincident with
+# pin endpoints, 1.27mm grid. No sim model — this cell exercises the sim
+# gate's graceful-degradation path (model/ and testbench/ are empty stubs).
+manifest:
+  name: conn-power-2pin
+  version: "0.1.0"
+  description: 2-pin DC power input connector (VIN, GND).
+  provenance: "generic connectivity, no external source"
+  license: GPL-3.0-or-later
+  # SELECTION.md sec 3: technology is the "how", not the function. A
+  # connector's defining nature is the mechanical mating interface (pin/socket
+  # engagement, retention, wire gauge) even though it carries no active
+  # circuitry — that puts it in electromechanical, not passive (passive is
+  # reserved for the electrical-component sense, e.g. the decoupling cap).
+  technology: electromechanical
+
+ports:
+  VIN: {direction: passive, kind: power}
+  GND: {direction: passive, kind: power}
+
+idioms:
+  keywords:
+    - power connector
+    - power input connector
+  # SELECTION.md sec 3 taxonomy: a connector is the connectivity tag verbatim
+  # ("connectors, headers, test points").
+  functions:
+    - connectivity
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Connector_Generic:Conn_01x02
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures below are rough,
+# plausible placeholder estimates (a generic 2-pin terminal block/header at
+# typical distributor pricing) — not sourced from a real BOM; dev_hours is 0
+# for every v1 cell (no firmware/config engineering, structural-only cells).
+costs:
+  bom: {qty1: 0.15, qty1k: 0.05}
+  area_mm2: 30
+  power_mw: 0
+  part_count: 1
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

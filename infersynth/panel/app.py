@@ -33,6 +33,7 @@ def _cell_summary(cell: CellPackage) -> dict[str, Any]:
     return {
         "name": cell.name,
         "version": cell.version,
+        "library": cell.library or "",
         "description": cell.manifest.get("description", ""),
         "depth": cell.depth.get("level", "L0"),
         "keywords": list(cell.keywords),
@@ -85,7 +86,11 @@ def create_app(
     app.state.svg_cache_dir = svg_cache_dir
 
     def _find_cell(name: str, version: str) -> CellPackage | None:
-        return cells.get(f"{name}@{version}")
+        # Route stays library-agnostic (name/version only — no panel
+        # redesign); resolve by bare_key since cells loaded from a two-level
+        # catalog are keyed "library/name@version" internally.
+        bare = f"{name}@{version}"
+        return next((c for c in cells.values() if c.bare_key == bare), None)
 
     @app.get("/", response_class=HTMLResponse)
     def catalog_index() -> str:

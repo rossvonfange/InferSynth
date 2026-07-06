@@ -1,0 +1,8 @@
+# Library manifest (SELECTION.md sec 1: KiCad-style library grouping).
+name: core
+description: >
+  InferSynth's own reference cells — the format-settling golden cells and
+  seed structural primitives (connectors, decoupling) authored directly by
+  the project rather than a community contributor.
+tier: official
+maintainer: InferSynth project

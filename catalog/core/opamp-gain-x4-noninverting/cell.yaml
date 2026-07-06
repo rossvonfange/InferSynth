@@ -11,6 +11,9 @@ manifest:
   description: Quad non-inverting op-amp gain stage (4 channels, shared rails, one package).
   provenance: "AoE 3rd ed. ch. 4 topology x4 (reference only; re-expressed from scratch)"
   license: GPL-3.0-or-later
+  # Same reasoning as the single-channel cell: the quad op-amp IC is what
+  # defines the technology, not the 8 feedback resistors around it.
+  technology: analog-ic
 
 ports:
   IN1: {direction: in, kind: electrical}
@@ -29,6 +32,8 @@ idioms:
   keywords:
     - amplifier gain stage
     - non-inverting amplifier
+  functions:
+    - amplification
   params:
     channels:
       type: int
@@ -70,3 +75,16 @@ verification:
 
 depth:
   level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (quad general-purpose op-amp + 8 resistors at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no firmware/
+# config engineering).
+costs:
+  bom: {qty1: 2.10, qty1k: 0.75}
+  area_mm2: 90
+  power_mw: 15
+  part_count: 9
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

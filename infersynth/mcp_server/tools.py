@@ -127,6 +127,7 @@ def catalog_search(query: str, catalog_dir: str = "catalog") -> dict[str, Any]:
         results.append(
             {
                 "cell": key,
+                "library": cell.library,
                 "description": cell.manifest.get("description", ""),
                 "keywords": list(cell.keywords),
             }

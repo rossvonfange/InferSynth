@@ -18,7 +18,7 @@ import pytest
 from infersynth.catalog.loader import load_cell
 from infersynth.compile_kicad import emit
 
-CATALOG = Path(__file__).resolve().parents[1] / "catalog"
+CATALOG = Path(__file__).resolve().parents[1] / "catalog" / "core"
 CELL1 = CATALOG / "opamp-gain-noninverting"
 CELL2 = CATALOG / "opamp-gain-x4-noninverting"
 

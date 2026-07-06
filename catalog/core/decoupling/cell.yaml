@@ -20,6 +20,11 @@ manifest:
   description: Per-IC decoupling/bypass capacitor pattern.
   provenance: "generic connectivity, no external source"
   license: GPL-3.0-or-later
+  # A decoupling cap is a passive electrical component through and through —
+  # no active silicon, no mechanical mating interface. Contrast with the
+  # connector cells above (electromechanical) and the op-amp cells below
+  # (analog-ic).
+  technology: passive
 
 ports:
   VCC: {direction: passive, kind: power}
@@ -29,6 +34,16 @@ idioms:
   keywords:
     - decoupling
     - bypass capacitor
+  # SELECTION.md sec 3 taxonomy has no literal "decoupling" tag; the two
+  # closest candidates are regulation ("rail generation and conditioning")
+  # and filtering ("frequency shaping"). Chosen: filtering — a decoupling cap
+  # does not generate or hold up the rail's DC level (that's the regulator/
+  # LDO's job, the case "regulation" is meant for); it shunts HF noise/
+  # transients off the rail at the point of use, i.e. it shapes the rail's
+  # frequency content. That is filtering, applied to a supply net rather
+  # than a signal net.
+  functions:
+    - filtering
   params:
     c_farads:
       type: float
@@ -48,3 +63,15 @@ verification:
 
 depth:
   level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (a single generic 0603 ceramic cap), not a sourced
+# real BOM; dev_hours is 0 (no firmware/config engineering).
+costs:
+  bom: {qty1: 0.02, qty1k: 0.003}
+  area_mm2: 2
+  power_mw: 0
+  part_count: 1
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

@@ -22,7 +22,7 @@ from infersynth.gates.run import run_cell_gates, run_design_gates
 from infersynth.gates.triage import ErcViolation
 
 _KICAD_CLI = shutil.which("kicad-cli")
-CATALOG = Path(__file__).resolve().parents[1] / "catalog"
+CATALOG = Path(__file__).resolve().parents[1] / "catalog" / "core"
 CELL1 = CATALOG / "opamp-gain-noninverting"
 CELLX4 = CATALOG / "opamp-gain-x4-noninverting"
 

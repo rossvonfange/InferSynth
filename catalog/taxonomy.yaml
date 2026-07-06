@@ -1,0 +1,15 @@
+# Function ontology (SELECTION.md sec 3). Categories are FUNCTION tags — what
+# an FRD asks for — never part families. Versioned with the catalog; cells
+# claim `idioms.functions: [tag, ...]`, validated against this file.
+version: 1
+functions:
+  timing:        {desc: oscillators, delays, PWM, sequencing}
+  amplification: {desc: gain, buffering, drive}
+  filtering:     {desc: frequency shaping}
+  regulation:    {desc: rail generation and conditioning}
+  conversion:    {desc: ADC/DAC, V-I, level translation}
+  interface:     {desc: comms buses and transceivers}
+  protection:    {desc: clamps, fusing, reverse polarity, ESD}
+  connectivity:  {desc: connectors, headers, test points}
+  indication:    {desc: human-visible/audible state}
+  processing:    {desc: programmable computation}
