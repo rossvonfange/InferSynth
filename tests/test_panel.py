@@ -15,8 +15,35 @@ from fastapi.testclient import TestClient  # noqa: E402
 from infersynth.gates import GateReport, GateResult  # noqa: E402
 from infersynth.panel import gate_io, render  # noqa: E402
 from infersynth.panel.app import create_app  # noqa: E402
+from infersynth.synthesize import synthesize  # noqa: E402
 
 GOLDEN_CATALOG = Path(__file__).parent.parent / "catalog"
+
+# Same demo text as tests/test_synthesize.py's DEMO_FRD (duplicated here
+# rather than imported so this test module doesn't reach into another
+# test module's internals — see test_synthesize.DEMO_FRD for the source of
+# truth on wording).
+DEMO_FRD = """# Demo sensor board
+
+- The board shall include a non-inverting amplifier gain stage with gain of 4.
+- The board shall include a voltage reference.
+- The board shall include decoupling.
+- The board shall include an adc driver.
+- The board shall include a 4-wire sensor input connector.
+"""
+
+# Deliberately omits a gain value: rg_ohms still has a cell.yaml default (so
+# it resolves to "default"), but gain has no default — only a [1.0, 1000.0]
+# range — so it falls all the way to the harness's deterministic "assumed
+# midpoint" rule (infersynth.synthesize._params_for).
+NO_GAIN_FRD = """# Demo sensor board (no gain given)
+
+- The board shall include a non-inverting amplifier gain stage.
+- The board shall include a voltage reference.
+- The board shall include decoupling.
+- The board shall include an adc driver.
+- The board shall include a 4-wire sensor input connector.
+"""
 
 
 @pytest.fixture()
@@ -118,3 +145,95 @@ def test_fragment_svg_placeholder_when_kicad_cli_absent(client: TestClient, monk
 def test_fragment_svg_404_for_unknown_cell(client: TestClient):
     resp = client.get("/cell/nope/0.0.0/fragment.svg")
     assert resp.status_code == 404
+
+
+def _write_demo_design(tmp_path: Path, frd_text: str, design_name: str) -> Path:
+    frd = tmp_path / f"{design_name}.md"
+    frd.write_text(frd_text, encoding="utf-8")
+    out = tmp_path / "designs" / design_name
+    synthesize(frd, GOLDEN_CATALOG, out, profile="prototype")
+    return out
+
+
+def test_designs_index_lists_synthesized_design(tmp_path: Path):
+    _write_demo_design(tmp_path, DEMO_FRD, "demo")
+    app = create_app(catalog_dir=GOLDEN_CATALOG, designs_dir=tmp_path / "designs")
+    client = TestClient(app)
+
+    resp = client.get("/designs")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "demo" in body
+    # DEMO_FRD's 5 requirements all reach a decided winner (test_synthesize's
+    # own test_full_pipeline asserts result.all_decided for this FRD).
+    assert "5/5" in body
+    assert f'/design?path={tmp_path / "designs" / "demo"}' in body
+
+
+def test_designs_index_dir_query_param_overrides_startup_dir(tmp_path: Path):
+    _write_demo_design(tmp_path, DEMO_FRD, "demo")
+    # No --designs at startup; ?dir= alone should still find it.
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+
+    resp = client.get("/designs", params={"dir": str(tmp_path / "designs")})
+    assert resp.status_code == 200
+    assert "demo" in resp.text
+
+
+def test_designs_index_empty_without_designs_dir(client: TestClient):
+    resp = client.get("/designs")
+    assert resp.status_code == 200
+    assert "No designs directory configured" in resp.text
+
+
+def test_design_page_shows_winner_and_assumed_marker(tmp_path: Path):
+    out = _write_demo_design(tmp_path, NO_GAIN_FRD, "no_gain")
+    app = create_app(catalog_dir=GOLDEN_CATALOG, designs_dir=tmp_path / "designs")
+    client = TestClient(app)
+
+    resp = client.get("/design", params={"path": str(out)})
+    assert resp.status_code == 200
+    body = resp.text
+
+    # SYNTHESIS.md rendered: the winner cell key appears (as a table cell in
+    # the "Instantiated cells" section) and its assumed gain is flagged.
+    assert "core/opamp-gain-noninverting@0.1.0" in body
+    assert "⚠ASSUMED" in body
+    assert 'class="assumed"' in body
+
+    # selection trace rendered structurally: winner badge + justification.
+    assert "WINNER" in body
+    assert "Justification" in body
+    assert "Candidates considered" in body
+
+
+def test_design_page_404_when_no_synthesis_md(tmp_path: Path):
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+    resp = client.get("/design", params={"path": str(tmp_path)})
+    assert resp.status_code == 404
+
+
+def test_design_page_trace_shape_mismatch_shows_error(tmp_path: Path):
+    out = tmp_path / "broken"
+    out.mkdir()
+    (out / "SYNTHESIS.md").write_text("# Synthesis report\n", encoding="utf-8")
+    (out / "selection_trace.json").write_text('{"schema": "not-the-right-schema"}')
+
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+    resp = client.get("/design", params={"path": str(out)})
+    assert resp.status_code == 200
+    assert "Selection trace error" in resp.text
+    assert "schema" in resp.text.lower()
+
+
+def test_nav_present_on_catalog_gates_and_designs_pages(client: TestClient):
+    for url in ("/", "/gates", "/designs"):
+        resp = client.get(url)
+        assert resp.status_code == 200
+        body = resp.text
+        assert 'href="/"' in body
+        assert 'href="/gates"' in body
+        assert 'href="/designs"' in body
