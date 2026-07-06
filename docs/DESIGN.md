@@ -242,6 +242,13 @@ requirements, one per bullet; headings are optional grouping *hints*, never
 required. Hierarchy lives in the formal spec, where machines need it; the lint
 stage derives the tree. Humans write prose lists; the parser owns structure.
 
+**Selection is specified in [SELECTION.md](SELECTION.md)** — libraries/namespaces,
+requirement allocation, two-layer recall (idioms + embeddings-as-recall-only),
+template-grounded absorption with capacity accounting, cost vectors × weight
+profiles, honest-accounting rules for composite cells, and the explanation
+trace. Its schemas (taxonomy.yaml, costs:, capacity:/absorbs:) are adopted by
+v1 artifacts now; the engine itself is v2.
+
 ## 7. Verification gates (per synthesized design)
 
 1. **Simulation:** emitted SystemC-AMS top vs. the spec's testbench.
