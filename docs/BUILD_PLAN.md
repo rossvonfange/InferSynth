@@ -548,3 +548,33 @@ needing a main-session review pass even where a budget-model agent produces
 the first draft. Stage 3's two main-session cells (`sallen-key-lowpass-2`,
 `linear-reg-fixed`) need an MCP session and should be scheduled as
 tightly-scripted main-loop work, not unsupervised budget-model dispatch.
+
+---
+
+## Delivered since the 2026-07-06 refresh (status ledger; verify with git log)
+
+- **WP-S1** sim v0 — delivered as `run_cell_simulation` + `infersynth/sim/`
+  (kernel/sources/checks/testbench); NOTE the as-built shape differs from this
+  plan's original WP-S1 sketch (no runner.py/TestbenchResult) — docs/SIM.md is
+  authoritative. All 14 catalog cells except the 2 remaining structural-only
+  connectors... (12 of 14) carry behavior.py + tb.py.
+- **WP-M1** matcher v0 — `infersynth/match/` (recall/allocation/propagate/
+  resolution/matcher) + disambiguation-primacy fix (silent-mis-inference
+  regression found live by the first synthesize run).
+- **WP-D1** decision engine — `infersynth/decide/` (costs/profiles/lockfile/
+  engine/trace) + `infersynth decide` / `infersynth costs lock`.
+- **WP-L1** — `infersynth/spec.py` (spec.yaml v0), `--spec` threading into
+  decide/synthesize, LSP "allocate subtree" code action.
+- **WP-S2** AMS emitter — `infersynth/emit_sysc_ams/` + model/ams/ tier +
+  `ams-simulation` gate (loud skip: no toolchain on this machine); golden C++
+  committed under tests/fixtures/ams_golden/.
+- **synthesize** (main-session) — `infersynth/synthesize.py` + CLI + real MCP
+  tool: lint → match → decide → instantiate → SYNTHESIS.md/selection_trace.
+- **capture** — `infersynth/capture.py` + CLI (CATALOG_GROWTH.md §C).
+- **tcl** — `infersynth/tclsh.py` + docs/TCL.md (surface #5).
+- Catalog: 14 cells in core/ (batches 1-3), 12 with sim-gate coverage.
+- **In flight at this writing**: WP-P1 (branch pack), WP-M2 (branch embed),
+  panel trace/design viewers (branch panel2). **Next after those merge**:
+  WP-F1 (fixed-point pipeline — deferred so it lands on top of the packer),
+  main-session judgment cells (sallen-key, linear-reg), inter-cell net-intent
+  design (spec nets: → wiring emission), BridgeSense-1 acceptance run.
