@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from infersynth import __version__
 
@@ -23,12 +24,38 @@ def _cmd_elaborate(args: argparse.Namespace) -> int:
 
 
 def _cmd_gates(args: argparse.Namespace) -> int:
-    print(
-        f"infersynth gates: not implemented yet — running gates against {args.design!r} "
-        "requires the synthesis pipeline (DESIGN.md section 7).",
-        file=sys.stderr,
-    )
-    return 2
+    import json
+
+    from infersynth.catalog import CatalogError
+    from infersynth.gates import GateReport, report_to_dict
+    from infersynth.gates.run import run_cell_gates, run_design_gates
+
+    if not args.cell and not args.design:
+        print("infersynth gates: one of --cell or --design is required", file=sys.stderr)
+        return 2
+    if args.cell and args.design:
+        print("infersynth gates: --cell and --design are mutually exclusive", file=sys.stderr)
+        return 2
+
+    try:
+        if args.cell:
+            report: GateReport = run_cell_gates(args.cell)
+        else:
+            if not args.root:
+                print("infersynth gates: --design requires --root NAME.kicad_sch", file=sys.stderr)
+                return 2
+            root_path = Path(args.design) / args.root
+            report = run_design_gates(root_path, golden=args.golden)
+    except (CatalogError, OSError, ValueError) as exc:
+        print(f"infersynth gates: {exc}", file=sys.stderr)
+        return 1
+
+    print(report.summary())
+    if args.json:
+        with open(args.json, "w") as fh:
+            json.dump(report_to_dict(report), fh, indent=2)
+        print(f"wrote {args.json}", file=sys.stderr)
+    return 0 if report.ok else 1
 
 
 def _cmd_lint(args: argparse.Namespace) -> int:
@@ -121,8 +148,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_elab.add_argument("spec", help="path to the formal spec")
     p_elab.set_defaults(func=_cmd_elaborate)
 
-    p_gates = sub.add_parser("gates", help="run verification gates on a design (stub)")
-    p_gates.add_argument("design", help="path to the synthesized design")
+    p_gates = sub.add_parser(
+        "gates", help="run verification gates on a catalog cell or a design"
+    )
+    p_gates.add_argument(
+        "--cell", metavar="DIR", help="cell package dir: validate -> harness ERC -> golden netlist"
+    )
+    p_gates.add_argument(
+        "--design", metavar="DIR", help="design dir (use with --root); runs ERC + optional --golden"
+    )
+    p_gates.add_argument(
+        "--root", metavar="NAME.kicad_sch", help="root schematic filename within --design"
+    )
+    p_gates.add_argument(
+        "--golden", metavar="FILE", help="golden_netlist.txt to compare against (design mode)"
+    )
+    p_gates.add_argument(
+        "--json", metavar="OUT", help="write a panel-compatible GateReport JSON to OUT"
+    )
     p_gates.set_defaults(func=_cmd_gates)
 
     p_lint = sub.add_parser("lint", help="lint an FRD (markdown or .reqif)")
