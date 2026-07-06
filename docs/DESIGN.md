@@ -134,7 +134,18 @@ containing:
   critical nets.
 
 Depth is per-entry and optional; a catalog is useful with nothing but L0
-entries. Crucially, **inter-block interconnect is always the user's job** —
+entries.
+
+L1/L2 artifacts embed layout assumptions — an L2 route is copper geometry that
+presumes a stackup and design rules. Entries therefore declare those
+assumptions in the manifest (layer count, relevant layer roles, clearance/width
+classes), and instantiation runs a **depth legality check**, DRC-style: if the
+target board satisfies the assumptions, the artifact instantiates; if the board
+is still unconstrained, synthesis may adopt the required stackup; otherwise the
+entry **loudly degrades** to the deepest tier the board supports (L2→L1→L0),
+with a diagnostic naming the violated assumption. Degradation is always legal
+and always reported — a silent L2→L0 fallback is the same sin as silent
+mis-inference (§2). Crucially, **inter-block interconnect is always the user's job** —
 InferSynth never routes between blocks, even where it could. An "Arduino
 Uno-class MCU" primitive may arrive with its crystal floorplan-placed and its
 oscillator loop pre-routed (L2 internally), while every connection *to other
