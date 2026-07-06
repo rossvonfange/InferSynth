@@ -33,7 +33,7 @@ design decisions**. Inference and synthesis are known, not guessed.
 | idea | FRD (natural language) |
 | RTL / HLS source | formal spec written in **inference idioms** |
 | behavioral simulation | SystemC-AMS simulation against the spec's testbench |
-| **inference** — tool recognizes RTL idioms → primitives (BRAM, DSP) | **catalog matching** — spec idioms → catalog blocks |
+| **inference** — tool recognizes RTL idioms → primitives (BRAM, DSP) | **catalog matching** — spec idioms → cells |
 | synthesis / technology mapping (LUT packing, cell binding) | **part binding** — real MPNs, component values, footprints |
 | place & route | schematic sheet generation; later PCB placement & routing |
 | primitive library + vendor IP catalog | **the catalog** (see §5) |
@@ -42,19 +42,19 @@ design decisions**. Inference and synthesis are known, not guessed.
 
 Structural correspondences that fall out of the analogy:
 
-- **A KiCad hierarchical sheet is an instantiated primitive.** Each catalog block
+- **A KiCad hierarchical sheet is an instantiated primitive.** Each cell
   synthesizes to one sheet (or a fragment of one). Connector/interface sheets play
   the role of IOBs.
 - **Power is modeled with primitives, not by analogy.** Where digital flows bolt
   power intent on as a sidecar (UPF/IEEE 1801), SystemC-AMS ELN models are
   electrical networks — rails, regulators, and loads are ordinary nodes and
-  elements. So power blocks are first-class *synthesizable* catalog primitives
+  elements. So power cells are first-class *synthesizable* primitives
   that simulate natively, and rail-integrity rules (exactly one driver per power
   net; the PWR_FLAG discipline: one flag per rail on its originating sheet,
   regulator `power_out` pins need none) are checked as primitive legality, the
   way clock-buffer rules are in an FPGA.
 - **Clock domains stay clocks.** The IR carries clock/timing domains as a
-  first-class annotation on nets and blocks (oscillators, RF chains, differential
+  first-class annotation on nets and cells (oscillators, RF chains, differential
   pairs, matched groups). In v1 they gate lint and simulation; later they are
   what *emits* layout constraints — netclasses, diff-pair rules, matched-length
   groups — exactly as timing constraints drive an FPGA's P&R.
@@ -80,21 +80,21 @@ Structural correspondences that fall out of the analogy:
    trustworthy" question by holding all authors to identical machine-checked
    standards.
 4. **The catalog is the dataset is the product.** The language users write, the
-   blocks synthesis instantiates, and the benchmark corpus are all views of the
+   cells synthesis instantiates, and the benchmark corpus are all views of the
    same versioned dataset (§5).
 
 ## 4. Intermediate representation
 
 **Authoring/inference IR: native Python.** The IR is a Python-embedded structural
-DSL (the pattern Amaranth/migen proved for the FPGA flow): a `Block` declares
-ports, parameters, and idiom vocabulary; a `Design` is a tree of block instances
+DSL (the pattern Amaranth/migen proved for the FPGA flow): a `Cell` declares
+ports, parameters, and idiom vocabulary; a `Design` is a tree of cell instances
 and nets. Elaboration walks the instance tree; the catalog matcher and the KiCad
 compiler consume the elaborated structure directly. No external parser, no
 fragile bindings on the critical path; the IR is importable, unit-testable code.
 
-**Simulation target: SystemC-AMS, by emission.** Each catalog block carries a
+**Simulation target: SystemC-AMS, by emission.** Each cell carries a
 behavioral SystemC-AMS model. The elaborated design *emits* a SystemC-AMS
-top-level (structural instantiation of the blocks' models) plus the testbench
+top-level (structural instantiation of the cells' models) plus the testbench
 from the spec, which is compiled and run as the simulation gate. Emission — not
 live binding — keeps the heavy toolchain off the critical path:
 
@@ -116,21 +116,21 @@ containing:
 
 | Artifact | Role |
 |---|---|
-| `model/` — SystemC-AMS behavioral + structural model | simulation gate; the block's meaning |
+| `model/` — SystemC-AMS behavioral + structural model | simulation gate; the cell's meaning |
 | `fragment/` — parameterized KiCad schematic fragment | what synthesis instantiates (via KiCAD-MCP-Server) |
-| `idioms.yaml` — vocabulary this block contributes to the FRD language | keywords, parameters, ranges, ambiguity rules (§6) |
+| `idioms.yaml` — vocabulary this cell contributes to the FRD language | keywords, parameters, ranges, ambiguity rules (§6) |
 | `selection.yaml` — matching + binding metadata | electrical ratings, qualification (e.g. AEC-Q100), package/footprint, cost/sourcing hooks, scoring attributes |
 | `testbench/` — stimulus + expected results | the entry's own acceptance test and its contribution to the benchmark corpus |
-| `floorplan/` *(optional)* — relative placement of the block's parts on the PCB | hard-IP-style layout knowledge (see depth tiers below) |
-| `routes/` *(optional)* — pre-routed critical intra-block traces (crystal loops, RF feeds, sense lines) | ditto |
+| `floorplan/` *(optional)* — relative placement of the cell's parts on the PCB | hard-IP-style layout knowledge (see depth tiers below) |
+| `routes/` *(optional)* — pre-routed critical intra-cell traces (crystal loops, RF feeds, sense lines) | ditto |
 | `manifest.yaml` — identity, version, provenance, license of referenced symbols/footprints | dataset hygiene |
 
 **Library depth is graded, not uniform** — the FPGA soft-IP/hard-macro spectrum:
 
 - **L0 — soft:** schematic fragment only. Parts land on the board as a ratsnest.
-- **L1 — floorplanned:** L0 + relative placement of the block's own parts
+- **L1 — floorplanned:** L0 + relative placement of the cell's own parts
   (cluster geometry, courtyard keep-outs).
-- **L2 — hard-routed:** L1 + pre-routed traces for the block's *internal*
+- **L2 — hard-routed:** L1 + pre-routed traces for the cell's *internal*
   critical nets.
 
 Depth is per-entry and optional; a catalog is useful with nothing but L0
@@ -145,11 +145,11 @@ is still unconstrained, synthesis may adopt the required stackup; otherwise the
 entry **loudly degrades** to the deepest tier the board supports (L2→L1→L0),
 with a diagnostic naming the violated assumption. Degradation is always legal
 and always reported — a silent L2→L0 fallback is the same sin as silent
-mis-inference (§2). Crucially, **inter-block interconnect is always the user's job** —
-InferSynth never routes between blocks, even where it could. An "Arduino
+mis-inference (§2). Crucially, **inter-cell interconnect is always the user's job** —
+InferSynth never routes between cells, even where it could. An "Arduino
 Uno-class MCU" primitive may arrive with its crystal floorplan-placed and its
 oscillator loop pre-routed (L2 internally), while every connection *to other
-blocks* remains an unrouted ratsnest by design.
+cells* remains an unrouted ratsnest by design.
 
 **Entry gates (CI, identical for all authors):**
 1. Behavioral model simulates against its testbench and passes.
@@ -171,7 +171,7 @@ proposes fixes.
 
 ### 5.1 Prior art and source corpora
 
-Three external block ecosystems, each with a distinct role here:
+Three external cell-library-adjacent ecosystems, each with a distinct role here:
 
 - **Zener / diodeinc** ([diodeinc/kicad](https://github.com/diodeinc/kicad)) —
   ~50 categories of Starlark-configured modules compiling into KiCad; with
@@ -268,7 +268,7 @@ Four deliverables in one repo:
 ## 10. Roadmap — Synth before Infer
 
 - **v1 (Synth):** IR + elaborator; catalog format, gates, and CI; seed catalog
-  (~10–15 blocks — candidate list: buck regulator, LDO, isolated DC-DC, CAN-FD
+  (~10–15 cells — candidate list: buck regulator, LDO, isolated DC-DC, CAN-FD
   transceiver ± isolation, LIN/K-line, RS-485, I²C isolator, level shifter,
   ESD/TVS group, connector/IOB, op-amp stage, analog mux, crystal/oscillator);
   IR→KiCad compiler; SystemC-AMS emitter + sim gate; gate runner. Spec authoring
@@ -279,19 +279,19 @@ Four deliverables in one repo:
   diagnostics; catalog factory v1.
 - **v3 (intake):** LLM FRD lint front-end + sign-off workflow; community
   submission pipeline; MCP server + skill polish.
-- **Later (layout):** floorplan-driven placement of block clusters (riding
+- **Later (layout):** floorplan-driven placement of cell clusters (riding
   `hierarchical_place`), instantiation of L1/L2 floorplans and pre-routed
-  intra-block traces, constraint emission from clock domains (netclasses,
-  diff pairs, matched groups), SI/power-budget closure gates. Inter-block
+  intra-cell traces, constraint emission from clock domains (netclasses,
+  diff pairs, matched groups), SI/power-budget closure gates. Inter-cell
   routing remains the user's, always.
 
 ## 11. Non-goals
 
 - No LLM-decided part selection, topology, or connectivity — ever (principle 1).
 - No free-form "AI draws a schematic" mode.
-- **No inter-block routing, ever** — not a v1 deferral but a design boundary.
+- **No inter-cell routing, ever** — not a v1 deferral but a design boundary.
   Catalog entries may carry floorplans and pre-routed *internal* traces (§5
-  depth tiers); connecting blocks to each other is the user's craft.
+  depth tiers); connecting cells to each other is the user's craft.
 - v1 does not attempt PCB layout or mechanical.
 - No proprietary designs in catalog, examples, or benchmarks; the corpus is
   built from public reference designs and synthetic compositions.
