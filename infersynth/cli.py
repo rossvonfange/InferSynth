@@ -75,6 +75,27 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_capture(args: argparse.Namespace) -> int:
+    from infersynth.capture import CaptureError, capture_cell
+
+    keywords = [k.strip() for k in args.keywords.split(",") if k.strip()] if args.keywords else None
+    try:
+        result = capture_cell(
+            args.sheet,
+            name=args.name,
+            library=args.library,
+            version=args.version,
+            keywords=keywords,
+            function=args.function,
+            license=args.license,
+            force=args.force,
+        )
+    except CaptureError as exc:
+        print(f"infersynth capture: {exc}", file=sys.stderr)
+        return 1
+    return 0 if result.gate_report.ok else 1
+
+
 def _cmd_catalog_validate(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
 
@@ -177,6 +198,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="catalog directory for vocabulary lint (grammar-only when omitted)",
     )
     p_lint.set_defaults(func=_cmd_lint)
+
+    p_capture = sub.add_parser(
+        "capture",
+        help="promote a user's KiCad hierarchical sheet into a catalog cell scaffold",
+    )
+    p_capture.add_argument("sheet", help="path to the user's .kicad_sch hierarchical sheet")
+    p_capture.add_argument("--name", required=True, help="cell name")
+    p_capture.add_argument(
+        "--library", required=True, metavar="DIR", help="target library directory (local tier)"
+    )
+    p_capture.add_argument("--version", default="0.1.0", help="cell version (default: 0.1.0)")
+    p_capture.add_argument(
+        "--keywords",
+        default=None,
+        help="comma-separated idiom keywords (default: derived from --name)",
+    )
+    p_capture.add_argument(
+        "--function", default=None, metavar="TAG", help="idioms.functions taxonomy tag"
+    )
+    p_capture.add_argument(
+        "--license", default="GPL-3.0-or-later", help="manifest.license (default: GPL-3.0-or-later)"
+    )
+    p_capture.add_argument(
+        "--force", action="store_true", help="overwrite an existing cell directory of the same name"
+    )
+    p_capture.set_defaults(func=_cmd_capture)
 
     p_cat = sub.add_parser("catalog", help="catalog operations")
     cat_sub = p_cat.add_subparsers(dest="catalog_command", required=True)
