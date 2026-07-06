@@ -1,0 +1,83 @@
+# Input protection / RFI filter — SEED_PLAN.md sec 2 precision-and-
+# protection cell (AoE ch.5 interference). Fragment authored via
+# KiCAD-MCP-Server, same conventions as the golden cells: hierarchical
+# labels coincident with pin endpoints, 1.27mm grid, ${IS.*} value slot, no
+# explicit wires (nets formed by same-named coincident labels).
+#
+# Topology: a series resistor R1 between IN and the protected node P
+# isolates the source from transient energy on the input line; D1 (anode
+# at P, cathode at VCC) clamps P from swinging above VCC + Vf; D2 (anode at
+# GND, cathode at P) clamps P from swinging below GND - Vf; C1 (P->GND) is
+# an RFI bypass cap. Node P *is* the OUT port — same "port coincides with
+# the internal junction node" convention as output-clamp (no separate
+# internal node name; the OUT hierarchical label is simply placed at every
+# pin that lands on P: R1/2, D1/2, D2/1, C1/1).
+#
+# Keyword-collision note: this cell's keywords ("input protection", "rfi
+# filter", "esd protection") are deliberately disjoint from output-clamp's
+# ("output clamp", "overvoltage clamp") — both cells clamp a signal line
+# with the same series-R + dual-Schottky pattern, but output-clamp has no
+# RFI bypass cap and targets an amplifier *output*, this cell targets a
+# *system input* and adds RFI filtering; `infersynth catalog validate`
+# reports no idiom collision between the two (verified after authoring).
+manifest:
+  name: input-protection-rfi
+  version: "0.1.0"
+  description: Series-R + dual-Schottky clamp + RFI bypass cap on a system input line.
+  provenance: "AoE 3rd ed. ch. 5 interference topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # Discrete diodes + passives, no active silicon -> analog-discrete.
+  technology: analog-discrete
+
+ports:
+  IN: {direction: in, kind: electrical}
+  OUT: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - input protection
+    - rfi filter
+    - esd protection
+  # SELECTION.md sec 3: clamps + RFI bypass are the protection tag verbatim
+  # ("clamps, fusing, reverse polarity, ESD").
+  functions:
+    - protection
+  params:
+    r_series_ohms:
+      type: float
+      range: [10.0, 1.0e+5]
+      default: 1000.0
+    c_rfi_farads:
+      type: float
+      range: [1.0e-11, 1.0e-8]
+      default: 1.0e-9
+
+bindings:
+  R1: "r_series_ohms"
+  C1: {expr: "c_rfi_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:D_Schottky
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (2 small-signal Schottky diodes + 1 series
+# resistor + 1 RFI bypass cap at typical distributor pricing), not a
+# sourced real BOM; dev_hours is 0 (no firmware/config engineering).
+costs:
+  bom: {qty1: 0.25, qty1k: 0.08}
+  area_mm2: 15
+  power_mw: 0
+  part_count: 4
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

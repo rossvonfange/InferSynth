@@ -1,0 +1,82 @@
+# Bridge sense-line conditioning — SEED_PLAN.md sec 2 signal-path cell
+# (bridge sense filtering practice, AoE ch.5-class). Fragment authored via
+# KiCAD-MCP-Server, same conventions as the golden cells: hierarchical
+# labels coincident with pin endpoints, 1.27mm grid, ${IS.*} value slot, no
+# explicit wires (nets formed by same-named coincident labels).
+#
+# Topology: series resistor R1 from SENSE_P to OUT_P and R2 from SENSE_N to
+# OUT_N isolate the bridge's sense lines from the downstream in-amp input
+# impedance; a differential capacitor C1 across OUT_P/OUT_N plus two
+# common-mode shunt caps C2 (OUT_P->GND), C3 (OUT_N->GND) form the classic
+# RC sense-line low-pass/EMI network sitting right at the bridge-to-in-amp
+# interface.
+manifest:
+  name: bridge-interface
+  version: "0.1.0"
+  description: Series-R + diff/common-mode-C sense-line conditioning between a Wheatstone bridge and an instrumentation amp.
+  provenance: "bridge sense filtering practice, AoE ch.5-class (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # Two resistors and three capacitors, no active silicon -> passive.
+  technology: passive
+
+ports:
+  SENSE_P: {direction: in, kind: electrical}
+  SENSE_N: {direction: in, kind: electrical}
+  OUT_P: {direction: out, kind: electrical}
+  OUT_N: {direction: out, kind: electrical}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - bridge interface
+    - sensor input conditioning
+  # SELECTION.md sec 3: RC sense conditioning is frequency shaping
+  # (filtering) that also protects the downstream in-amp from EMI/transients
+  # coupled onto the sense lines (protection).
+  functions:
+    - filtering
+    - protection
+  params:
+    r_series_ohms:
+      type: float
+      range: [100.0, 1.0e+5]
+      default: 1000.0
+    c_diff_farads:
+      type: float
+      range: [1.0e-10, 1.0e-6]
+      default: 1.0e-8
+    c_cm_farads:
+      type: float
+      range: [1.0e-11, 1.0e-7]
+      default: 1.0e-9
+
+bindings:
+  R1: "r_series_ohms"
+  R2: "r_series_ohms"
+  C1: {expr: "c_diff_farads", format: capacitance}
+  C2: {expr: "c_cm_farads", format: capacitance}
+  C3: {expr: "c_cm_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:R
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (2 resistors + 3 capacitors at typical distributor
+# pricing), not a sourced real BOM; dev_hours is 0 (no firmware/config
+# engineering).
+costs:
+  bom: {qty1: 0.15, qty1k: 0.04}
+  area_mm2: 15
+  power_mw: 0
+  part_count: 5
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

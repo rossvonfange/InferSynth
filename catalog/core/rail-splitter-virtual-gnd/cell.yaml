@@ -1,0 +1,79 @@
+# Rail splitter / virtual ground — SEED_PLAN.md sec 2 power cell (AoE ch.4
+# single-supply). Fragment authored via KiCAD-MCP-Server, same conventions
+# as the golden cells: hierarchical labels coincident with pin endpoints,
+# 1.27mm grid, ${IS.*} value slot, no explicit wires (nets formed by
+# same-named coincident labels).
+#
+# Topology: R1 (VCC->MID) and R2 (MID->GND) form a resistive half-rail
+# divider; C1 (MID->GND) bypasses the divider node for AC stiffness. U1 is
+# an OPA340NA wired as a unity-gain buffer (+in = MID, -in tied directly to
+# its own output) so the buffered mid-rail is a low-impedance virtual
+# ground. The buffered output net is locally named VGND and also exposed
+# as the hierarchical port VGND.
+#
+# NOTE on VGND port kind: VGND is typed `electrical`, not `power`, even
+# though it is electrically a ground reference. It is a signal-level
+# mid-rail reference *output* (driven by U1, sourced/sunk through a finite
+# op-amp output impedance) rather than a power rail in the sense VCC/GND
+# are here — a deliberate, documented choice.
+manifest:
+  name: rail-splitter-virtual-gnd
+  version: "0.1.0"
+  description: Buffered resistive-divider rail splitter (virtual ground) for single-supply circuits.
+  provenance: "AoE 3rd ed. ch. 4 single-supply topology (reference only; re-expressed from scratch; verify against book)"
+  license: GPL-3.0-or-later
+  # The buffer op-amp defines the cell; the divider/bypass network is
+  # passive support.
+  technology: analog-ic
+
+ports:
+  VCC: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+  VGND: {direction: out, kind: electrical}
+
+idioms:
+  keywords:
+    - rail splitter
+    - virtual ground
+  # SELECTION.md sec 3: rail generation/conditioning is the regulation tag
+  # verbatim.
+  functions:
+    - regulation
+  params:
+    r_div_ohms:
+      type: float
+      range: [1.0e+3, 1.0e+6]
+      default: 10000.0
+    c_filt_farads:
+      type: float
+      range: [1.0e-9, 1.0e-5]
+      default: 1.0e-7
+
+bindings:
+  R1: "r_div_ohms"
+  R2: "r_div_ohms"
+  C1: {expr: "c_filt_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Amplifier_Operational:OPA340NA
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (1 general-purpose op-amp + 2 resistors + 1
+# capacitor at typical distributor pricing), not a sourced real BOM;
+# dev_hours is 0 (no firmware/config engineering).
+costs:
+  bom: {qty1: 1.05, qty1k: 0.40}
+  area_mm2: 45
+  power_mw: 5
+  part_count: 4
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1
