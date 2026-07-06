@@ -187,6 +187,36 @@ weighted scores of the finalists, and the winner's justification in
 deterministic terms only — never a similarity score as a reason. Rendered in
 the panel and the CLI; stored beside the design as `selection_trace.json`.
 
+## 8. The repeatability contract (run boundary)
+
+**Synthesis is a pure function**: `(spec, catalog@version, taxonomy, weight
+profile, lockfiles) → design`, identical on every re-run. Laziness (§ RECON
+HARVEST 2: sim-guided lazy candidate expansion) is an efficiency strategy
+inside a FIXED, deterministic exploration policy — deterministic expansion
+order and tie-breaks, count-based budgets (never wall-clock), order-insensitive
+parallel reduction, pinned embedding model, pinned AMS solver version/config.
+Effort knobs change how much work a run does, never which answer it reaches.
+
+**The escalation ladder splits at the run boundary.** In-run, only the
+deterministic rungs execute (idioms → structured catalog → pinned embeddings →
+sim-scored expansion). The upper rungs — LLM assistance, web research, human
+judgment — NEVER execute inside synthesis: an unresolved residual emits a
+typed diagnostic (ResolutionRequest pattern: frd.no-primitive, frd.ambiguous,
+frd.absorbable-no-template, allocation prompts), resolved BETWEEN runs, with
+every resolution landing as a durable input artifact (spec edit, allocation,
+new cell/template, waiver) the next run consumes deterministically. All
+steering is input change — the user changing available libraries is the
+canonical instance of the general rule.
+
+**Lockfiles**: any external data the decision layer reads (BOM pricing, stock,
+sourcing) is snapshotted into a versioned lockfile; synthesis never touches a
+live API; refreshing the lockfile is an explicit user action. No randomized or
+seeded search — or seeds pinned and recorded, never implicit.
+
+Ensemble variance (§ RECON HARVEST 3) remains valid under this contract: the
+candidate ensemble is deterministically enumerated, so its variance is a
+repeatable measurement of the SPEC's looseness, not solver noise.
+
 ## Adoption order
 
 - **Now (v1 artifacts):** taxonomy.yaml + `functions:` claims; library
