@@ -18,6 +18,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
 ]
+reqif = [
+    "reqif>=0.0.40",
+]
 
 [project.scripts]
 infersynth = "infersynth.cli:main"
