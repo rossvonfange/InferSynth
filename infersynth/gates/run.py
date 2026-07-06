@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 from infersynth.catalog.loader import CellPackage, load_cell
+from infersynth.gates.ams_simulation import ams_simulation_cell_gate
 from infersynth.gates.erc import erc_gate
 from infersynth.gates.harness import generate_harness
 from infersynth.gates.netlist import export_netlist, parse_golden_netlist
@@ -71,6 +72,11 @@ def run_cell_gates(
     # Behavioral simulation gate (sim-gate v0): real for cells that carry a
     # model + testbench, loudly SKIPPED for structural-only cells.
     report.results.append(simulation_cell_gate(pkg))
+
+    # AMS simulation gate (DESIGN.md §4 end-state): emitted SystemC-AMS compiled
+    # + run where a toolchain exists, loudly SKIPPED otherwise or when the cell
+    # ships no model/ams/.
+    report.results.append(ams_simulation_cell_gate(pkg))
     return report
 
 
