@@ -1,0 +1,50 @@
+# Per-IC decoupling/bypass capacitor pattern (SEED_PLAN.md sec 2, structural-only).
+# Fragment authored 2026-07-06 via KiCAD-MCP-Server, same conventions as the
+# golden cells (opamp-gain-noninverting): hierarchical labels coincident with
+# pin endpoints, 1.27mm grid, ${IS.*} value slot. No sim model — this cell
+# exercises the sim gate's graceful-degradation path (model/ and testbench/
+# are empty stubs).
+#
+# Binding format-hint extension (WP1 loader, this cell's contribution): a
+# binding entry may be a bare expression string (existing form) OR a mapping
+# {expr: <string>, format: <hint>}. `format` is presentational metadata for
+# downstream consumers that render the bound value (e.g. panel/templates.py,
+# a future BOM/value formatter) — it does not change binder semantics: the
+# expression still evaluates to a plain float in farads via the same
+# restricted grammar (infersynth.bind.expr), same as an ohms-valued binding.
+# `format: capacitance` documents that C1's bound value should be rendered
+# with capacitance-appropriate units/suffixes rather than the ohms default.
+manifest:
+  name: decoupling
+  version: "0.1.0"
+  description: Per-IC decoupling/bypass capacitor pattern.
+  provenance: "generic connectivity, no external source"
+  license: GPL-3.0-or-later
+
+ports:
+  VCC: {direction: passive, kind: power}
+  GND: {direction: passive, kind: power}
+
+idioms:
+  keywords:
+    - decoupling
+    - bypass capacitor
+  params:
+    c_farads:
+      type: float
+      range: [1.0e-9, 1.0e-4]
+      default: 1.0e-7
+
+bindings:
+  C1: {expr: "c_farads", format: capacitance}
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:C
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0

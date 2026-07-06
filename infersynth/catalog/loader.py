@@ -16,7 +16,11 @@ A cell package is a directory:
 * ``ports``: name -> {direction: in|out|inout|passive,
   kind: electrical|power|digital}
 * ``bindings``: fragment ref -> arithmetic expression string over idiom params
-  (grammar: infersynth.bind.expr)
+  (grammar: infersynth.bind.expr). A binding value may also be a mapping
+  ``{expr: <string>, format: <hint>}`` when the bound value needs a
+  presentational format hint (e.g. ``format: capacitance`` for a farads-valued
+  binding, vs the ohms-style default) — see ``CellPackage.binding_formats``.
+  ``format`` is metadata only; it does not change binder semantics.
 * ``verification``: golden_netlist (filename relative to the cell dir;
   must exist)
 * ``selection``: freeform mapping (stub — the v2 scoring engine's input)
@@ -82,6 +86,8 @@ class CellPackage:
     ports: dict[str, dict[str, str]] = field(default_factory=dict)
     #: fragment ref -> binding expression string
     bindings: dict[str, str] = field(default_factory=dict)
+    #: fragment ref -> format hint (only for refs whose binding declared one)
+    binding_formats: dict[str, str] = field(default_factory=dict)
     #: verification metadata (golden_netlist, ...)
     verification: dict[str, Any] = field(default_factory=dict)
 
@@ -172,25 +178,56 @@ def _validate_ports(ports: Any, diags: list[str]) -> dict[str, dict[str, str]]:
     return normalized
 
 
-def _validate_bindings(bindings: Any, idioms: dict[str, Any], diags: list[str]) -> dict[str, str]:
-    """Validate the ``bindings`` section (WP1 cross-checks).
+_BINDING_MAPPING_KEYS = {"expr", "format"}
 
-    Every expression must parse under the restricted grammar and every free
-    name in it must be a declared idiom param.
+
+def _validate_bindings(
+    bindings: Any, idioms: dict[str, Any], diags: list[str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Validate the ``bindings`` section (WP1 cross-checks, + format-hint extension).
+
+    Every binding value is either a bare expression string, or a mapping
+    ``{expr: <string>, format: <hint>}`` (the format hint is presentational
+    metadata for downstream value formatting, e.g. ``capacitance`` vs the
+    ohms-style default; it does not affect evaluation). Every expression must
+    parse under the restricted grammar and every free name in it must be a
+    declared idiom param. Returns ``(bindings, binding_formats)`` — the first
+    maps ref -> expression string (format-hint stripped), the second maps
+    ref -> format hint for the refs that declared one.
     """
     from infersynth.bind.expr import BindingError, free_names
 
     normalized: dict[str, str] = {}
+    formats: dict[str, str] = {}
     if bindings is None:
-        return normalized
+        return normalized, formats
     if not isinstance(bindings, dict):
         diags.append("cell.yaml: bindings must be a mapping of ref -> expression string")
-        return normalized
+        return normalized, formats
     declared = set((idioms.get("params") or {}) if isinstance(idioms, dict) else {})
-    for ref, expr in sorted(bindings.items()):
+    for ref, value in sorted(bindings.items()):
         where = f"cell.yaml: bindings.{ref}"
-        if not isinstance(expr, str):
-            diags.append(f"{where} must be an expression string, got {type(expr).__name__}")
+        fmt: str | None = None
+        if isinstance(value, dict):
+            unknown = sorted(set(value) - _BINDING_MAPPING_KEYS)
+            if unknown:
+                diags.append(f"{where}: unknown key(s) {unknown} in binding mapping")
+            expr = value.get("expr")
+            if not isinstance(expr, str):
+                diags.append(
+                    f"{where}: mapping form requires a string 'expr', "
+                    f"got {type(expr).__name__}"
+                )
+                continue
+            if "format" in value:
+                if not isinstance(value["format"], str) or not value["format"]:
+                    diags.append(f"{where}.format must be a non-empty string")
+                else:
+                    fmt = value["format"]
+        elif isinstance(value, str):
+            expr = value
+        else:
+            diags.append(f"{where} must be an expression string, got {type(value).__name__}")
             continue
         try:
             names = free_names(expr)
@@ -203,7 +240,9 @@ def _validate_bindings(bindings: Any, idioms: dict[str, Any], diags: list[str]) 
                 "which is not a declared idiom param"
             )
         normalized[str(ref)] = expr
-    return normalized
+        if fmt is not None:
+            formats[str(ref)] = fmt
+    return normalized, formats
 
 
 def _validate_verification(
@@ -290,7 +329,7 @@ def load_cell(cell_dir: str | Path, strict: bool = True) -> CellPackage:
     _validate_idiom_params(idioms.get("params"), diags)
 
     ports = _validate_ports(data.get("ports"), diags)
-    bindings = _validate_bindings(data.get("bindings"), idioms, diags)
+    bindings, binding_formats = _validate_bindings(data.get("bindings"), idioms, diags)
     verification = _validate_verification(data.get("verification"), path, diags)
 
     selection = _check_mapping(data.get("selection"), "cell.yaml: selection", diags)
@@ -319,5 +358,6 @@ def load_cell(cell_dir: str | Path, strict: bool = True) -> CellPackage:
         depth=depth,
         ports=ports,
         bindings=bindings,
+        binding_formats=binding_formats,
         verification=verification,
     )

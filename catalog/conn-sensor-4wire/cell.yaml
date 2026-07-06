@@ -1,0 +1,33 @@
+# IOB connector cell (SEED_PLAN.md sec 2, structural-only): 4-wire sensor input.
+# Fragment authored 2026-07-06 via KiCAD-MCP-Server, same conventions as the
+# golden cells (opamp-gain-noninverting): hierarchical labels coincident with
+# pin endpoints, 1.27mm grid. No sim model — this cell exercises the sim
+# gate's graceful-degradation path (model/ and testbench/ are empty stubs).
+manifest:
+  name: conn-sensor-4wire
+  version: "0.1.0"
+  description: 4-wire bridge/sensor input connector (excitation + differential sense pair).
+  provenance: "generic connectivity, no external source"
+  license: GPL-3.0-or-later
+
+ports:
+  EXC_P: {direction: passive, kind: electrical}
+  SENSE_P: {direction: passive, kind: electrical}
+  SENSE_N: {direction: passive, kind: electrical}
+  EXC_N: {direction: passive, kind: electrical}
+
+idioms:
+  keywords:
+    - sensor connector
+    - 4-wire sensor input
+
+selection:
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Connector_Generic:Conn_01x04
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
