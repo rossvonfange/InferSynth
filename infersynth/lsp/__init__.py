@@ -18,9 +18,13 @@ from pathlib import Path
 __all__ = ["run"]
 
 
-def run(catalog_dir: str | Path | None = None) -> None:
+def run(catalog_dir: str | Path | None = None, spec_path: str | Path | None = None) -> None:
     """Start the server on stdio. Raises :class:`ImportError` if the
-    optional ``pygls`` dependency (extra ``lsp``) is not installed."""
+    optional ``pygls`` dependency (extra ``lsp``) is not installed.
+
+    ``spec_path`` (WP-L1) enables the "Allocate subtree to library" code
+    action, which appends into that spec file; omitted, the action is
+    absent (see :mod:`infersynth.lsp.server`)."""
     from infersynth.lsp.server import run_stdio
 
-    run_stdio(catalog_dir)
+    run_stdio(catalog_dir, spec_path)
