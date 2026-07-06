@@ -28,6 +28,9 @@ packages = ["infersynth"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "kicad: test shells out to kicad-cli (skipped when it is not on PATH)",
+]
 
 [tool.ruff]
 line-length = 100
