@@ -32,12 +32,14 @@ verified against this repo:
   ([docs/SIM.md](docs/SIM.md)). The emitted-SystemC-AMS tier exists but skips
   loudly without a toolchain (this machine included) — nothing is ever
   reported verified when it wasn't run.
-- The catalog is small — 14 cells, all leaf-level (L0: schematic fragment
+- The catalog is small — 21 cells, all leaf-level (L0: schematic fragment
   only, no floorplan/pre-routed tiers) — and none of the example FRDs in
   `examples/frds/` resolve cleanly against it yet (they target the eventual,
   larger catalog). The quickstart below uses an FRD sized to what exists now.
-- Inter-cell wiring is never drawn by synthesis, by design (`DESIGN.md` §2/§11);
-  `SYNTHESIS.md` lists a wiring worklist for you to finish in KiCad.
+- Synthesis now wires power rails and unambiguous intra-chain signal nets
+  (docs/NETFLOW.md stage 1); remaining inter-cell signal wiring is listed in
+  `SYNTHESIS.md` as a worklist — drawn only where inference is unique or
+  declared, never guessed.
 - The v2 selection engine (packing, embeddings recall, cost-weighted decision,
   fixed-point resolution) is landing incrementally — see
   [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) for the commit-referenced ledger of
@@ -94,7 +96,7 @@ part that matters: synthesis never draws inter-cell wiring, on principle):
 Open `build/demo.kicad_sch` in KiCad. Requirements that don't match a catalog
 cell lint as `frd.no-primitive` instead of failing silently — try
 `infersynth lint` on any file in `examples/frds/` to see that diagnostic fire
-against the current 14-cell catalog.
+against the current catalog.
 
 ## Surfaces
 
@@ -129,9 +131,9 @@ From [docs/DESIGN.md](docs/DESIGN.md) §3:
 
 ## Catalog snapshot
 
-14 cells, one library (`catalog/core/`, tier `official`). Function tags
-(`catalog/taxonomy.yaml`), by count of claiming cells: amplification (5),
-connectivity (3), filtering (2), protection (2), regulation (2). All entries
+21 cells, one library (`catalog/core/`, tier `official`). Function tags
+(`catalog/taxonomy.yaml`), by count of claiming cells: amplification (7),
+filtering (5), regulation (4), protection (3), connectivity (3). All entries
 are depth `L0` (schematic fragment only — no floorplan or pre-routed tiers
 yet). Growing the catalog is most of the near-term roadmap; see
 [docs/CATALOG_GROWTH.md](docs/CATALOG_GROWTH.md) and `infersynth capture` to
