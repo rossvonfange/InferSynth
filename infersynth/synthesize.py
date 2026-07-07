@@ -148,6 +148,7 @@ def synthesize(
     rail_aliases: dict[str, str] | None = None,
     rail_binds: dict[tuple[str, str], str] | None = None,
     testbench: DesignTestbench | None = None,
+    exclude_cells: frozenset[str] = frozenset(),
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -178,6 +179,12 @@ def synthesize(
     mres = match(
         reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints, pins=pins
     )
+    if exclude_cells:
+        # WP-F1 fixed-point feedback: the driver revokes cells whose gates failed;
+        # honoring it here makes the one-shot emit reproduce the converged decision.
+        from infersynth.pipeline import filter_match_excluding
+
+        mres = filter_match_excluding(mres, exclude_cells)
     decision = decide(mres, catalog, prof, lockfile=lockfile)
 
     design_name = name or _sanitize_instname(frd.stem)
