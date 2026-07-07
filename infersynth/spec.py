@@ -55,13 +55,17 @@ __all__ = [
     "TbStimulus",
     "TbCheck",
     "DesignTestbench",
+    "BoardOutline",
+    "PlacementSpec",
     "load_spec",
 ]
 
 _TOP_KEYS = {
     "frd", "allocations", "profile", "endpoints", "knobs",
     "feeds", "pins", "forbid_pack", "rail_aliases", "rail_binds", "testbench",
+    "placement",
 }
+_PLACEMENT_EDGES = ("north", "south", "east", "west")
 _KNOB_KEYS = {"recall", "allocation", "absorption"}
 _ABSORPTION_VALUES = ("off", "conservative", "aggressive")
 
@@ -174,6 +178,30 @@ class DesignTestbench:
 
 
 @dataclass(frozen=True)
+class BoardOutline:
+    """A rectangular board outline in millimetres (spec ``placement.board``)."""
+
+    width_mm: float
+    height_mm: float
+
+
+@dataclass(frozen=True)
+class PlacementSpec:
+    """Auto-floorplan hints (spec ``placement:`` key, v0 — docs/FLOORPLAN.md).
+
+    ``board`` is an optional fixed outline (else the floorplanner computes one
+    from total courtyard area); ``edges`` maps a requirement id to a compass
+    edge (``north``/``south``/``east``/``west``) that pulls that requirement's
+    cluster to a board edge band. The vocabulary is deliberately small — finer
+    placement is pcbnew's job (the floorplanner is a starting point, not a
+    layout tool; see the cynth anti-goal in docs/DESIGN.md / docs/UX.md).
+    """
+
+    board: BoardOutline | None = None
+    edges: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Spec:
     """A loaded ``spec.yaml`` (formal-spec artifact, WP-L1)."""
 
@@ -195,6 +223,8 @@ class Spec:
     rail_aliases: dict[str, str] = field(default_factory=dict)
     #: NETFLOW per-requirement rail bindings (override name/alias grouping).
     rail_binds: tuple[RailBind, ...] = ()
+    #: auto-floorplan hints (spec ``placement:``); None when unspecified.
+    placement: PlacementSpec | None = None
 
     def rail_binds_mapping(self) -> dict[tuple[str, str], str]:
         """The rail binds as the ``{(requirement_id, port): rail}`` mapping the
@@ -358,6 +388,41 @@ def _load_rail_binds(raw: Any, where: str) -> tuple[RailBind, ...]:
         seen.add(key)
         binds.append(RailBind(at=entry["at"], port=entry["port"], rail=entry["rail"]))
     return tuple(binds)
+def _load_placement(raw: Any, where: str) -> PlacementSpec | None:
+    if raw is None:
+        return None
+    mapping = _require_mapping(raw, where)
+    unknown = sorted(set(mapping) - {"board", "edges"})
+    if unknown:
+        raise SpecError(f"{where}: unknown key(s) {unknown}")
+    board: BoardOutline | None = None
+    if mapping.get("board") is not None:
+        b = _require_mapping(mapping["board"], f"{where}.board")
+        b_unknown = sorted(set(b) - {"width_mm", "height_mm"})
+        if b_unknown:
+            raise SpecError(f"{where}.board: unknown key(s) {b_unknown}")
+        for key in ("width_mm", "height_mm"):
+            if key not in b:
+                raise SpecError(f"{where}.board: required key {key!r} is missing")
+        width = _as_number(b["width_mm"], f"{where}.board.width_mm")
+        height = _as_number(b["height_mm"], f"{where}.board.height_mm")
+        if width <= 0 or height <= 0:
+            raise SpecError(f"{where}.board: width_mm and height_mm must be > 0")
+        board = BoardOutline(width_mm=width, height_mm=height)
+    edges: dict[str, str] = {}
+    if mapping.get("edges") is not None:
+        e = _require_mapping(mapping["edges"], f"{where}.edges")
+        for req_id, edge in e.items():
+            if not (isinstance(req_id, str) and req_id):
+                raise SpecError(f"{where}.edges: keys must be non-empty requirement id strings")
+            if edge not in _PLACEMENT_EDGES:
+                raise SpecError(
+                    f"{where}.edges[{req_id!r}] must be one of {_PLACEMENT_EDGES}, got {edge!r}"
+                )
+            edges[req_id] = edge
+    return PlacementSpec(board=board, edges=edges)
+
+
 def _as_number(value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise SpecError(f"{where} must be a number, got {value!r}")
@@ -498,6 +563,7 @@ def load_spec(path: str | Path) -> Spec:
     rail_aliases = _load_rail_aliases(raw.get("rail_aliases"), f"{spec_path}: rail_aliases")
     rail_binds = _load_rail_binds(raw.get("rail_binds"), f"{spec_path}: rail_binds")
     testbench = _load_testbench(raw.get("testbench"), f"{spec_path}: testbench")
+    placement = _load_placement(raw.get("placement"), f"{spec_path}: placement")
 
     return Spec(
         path=spec_path,
@@ -513,4 +579,5 @@ def load_spec(path: str | Path) -> Spec:
         rail_aliases=rail_aliases,
         rail_binds=rail_binds,
         testbench=testbench,
+        placement=placement,
     )

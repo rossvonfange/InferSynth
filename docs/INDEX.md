@@ -104,6 +104,16 @@ PCBs. Depends on the packer and decision engine landing first; not scheduled
 before the v2 engine exists. Read for context on where layout automation is
 headed, not for anything buildable today.
 
+### [FLOORPLAN.md](FLOORPLAN.md) — spec (landed Round 4)
+The complement to FABRIC: instead of populating a pre-placed board, auto-
+floorplan a fresh one per design — emit a placed, grouped, UNROUTED
+`.kicad_pcb` from the signal-flow DAG + KiCad `(group)` per instance + spec
+`placement:` hints, that the user opens in pcbnew and routes. States the
+"pcbnew IS the floorplanner, no interactive UI" anti-goal, the three
+mechanisms, the courtyard approximation, the fabric composition
+(placement-proposed vs placement-done), and the L1-cell-floorplan future
+hook. Read alongside FABRIC.
+
 ### [IR.md](IR.md) — reference
 Describes what `infersynth/ir/` actually implements today: `Cell`, `Design`,
 `elaborate()`, and the `ElaboratedDesign` output (instances, nets, domains,
