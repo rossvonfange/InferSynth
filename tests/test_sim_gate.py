@@ -28,6 +28,13 @@ SUMMING = CATALOG / "summing-offset-stage"
 ADC_RC = CATALOG / "adc-driver-rc"
 BJT_CS = CATALOG / "current-source-bjt"
 PWR_COND = CATALOG / "power-input-conditioning"
+SALLEN_KEY = CATALOG / "sallen-key-lowpass-2"
+MFB = CATALOG / "mfb-lowpass-2"
+LINREG = CATALOG / "linear-reg-fixed"
+IN_AMP = CATALOG / "instrumentation-amp-3opamp"
+BRIDGE = CATALOG / "bridge-interface"
+RAIL_SPLIT = CATALOG / "rail-splitter-virtual-gnd"
+INPUT_PROT = CATALOG / "input-protection-rfi"
 _TAXONOMY = load_taxonomy(CATALOG.parent / "taxonomy.yaml")
 
 
@@ -98,6 +105,49 @@ class TestBehavioralCellGate:
         assert any("forward/settles_to" in d for d in result.diagnostics)
         assert any("reverse/settles_to" in d for d in result.diagnostics)
 
+    def test_sallen_key_lowpass_2_passes(self):
+        result = simulation_cell_gate(load_cell(SALLEN_KEY))
+        assert result.status == GateStatus.PASS
+        assert any("passband/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("at_fc/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("dc_settle/settles_to" in d for d in result.diagnostics)
+
+    def test_mfb_lowpass_2_passes_and_is_inverted(self):
+        result = simulation_cell_gate(load_cell(MFB))
+        assert result.status == GateStatus.PASS
+        assert any("passband/inverted" in d for d in result.diagnostics)
+        assert any("at_fc/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("dc_settle/settles_to" in d for d in result.diagnostics)
+
+    def test_linear_reg_fixed_passes(self):
+        result = simulation_cell_gate(load_cell(LINREG))
+        assert result.status == GateStatus.PASS
+        assert any("regulating/settles_to" in d for d in result.diagnostics)
+        assert any("dropout/settles_to" in d for d in result.diagnostics)
+
+    def test_instrumentation_amp_3opamp_passes(self):
+        result = simulation_cell_gate(load_cell(IN_AMP))
+        assert result.status == GateStatus.PASS
+        assert any("linear/amplitude_ratio" in d for d in result.diagnostics)
+        assert any("overdrive/clipped_within" in d for d in result.diagnostics)
+
+    def test_bridge_interface_passes(self):
+        result = simulation_cell_gate(load_cell(BRIDGE))
+        assert result.status == GateStatus.PASS
+        assert any("dc_passthrough/settles_to(out_p)" in d for d in result.diagnostics)
+        assert any("dc_passthrough/settles_to(out_n)" in d for d in result.diagnostics)
+
+    def test_rail_splitter_virtual_gnd_passes(self):
+        result = simulation_cell_gate(load_cell(RAIL_SPLIT))
+        assert result.status == GateStatus.PASS
+        assert any("midpoint/settles_to" in d for d in result.diagnostics)
+
+    def test_input_protection_rfi_passes(self):
+        result = simulation_cell_gate(load_cell(INPUT_PROT))
+        assert result.status == GateStatus.PASS
+        assert any("linear/settles_to" in d for d in result.diagnostics)
+        assert any("overdrive/clipped_within" in d for d in result.diagnostics)
+
     def test_structural_cell_skips_loudly(self):
         result = simulation_cell_gate(load_cell(DECOUPLING))
         assert result.status == GateStatus.SKIPPED
@@ -128,7 +178,24 @@ class TestDeterminism:
         assert run_cell_simulation(cell) == run_cell_simulation(cell)
 
     @pytest.mark.parametrize(
-        "cell_dir", [UNITY, INVERTING, VREF, CLAMP, SUMMING, ADC_RC, BJT_CS, PWR_COND]
+        "cell_dir",
+        [
+            UNITY,
+            INVERTING,
+            VREF,
+            CLAMP,
+            SUMMING,
+            ADC_RC,
+            BJT_CS,
+            PWR_COND,
+            SALLEN_KEY,
+            MFB,
+            LINREG,
+            IN_AMP,
+            BRIDGE,
+            RAIL_SPLIT,
+            INPUT_PROT,
+        ],
     )
     def test_new_cells_are_bit_identical(self, cell_dir: Path):
         cell = load_cell(cell_dir)
@@ -195,7 +262,25 @@ class TestFailureModes:
 
 @pytest.mark.parametrize(
     "cell_dir",
-    [NONINV, X4, UNITY, INVERTING, VREF, CLAMP, SUMMING, ADC_RC, BJT_CS, PWR_COND],
+    [
+        NONINV,
+        X4,
+        UNITY,
+        INVERTING,
+        VREF,
+        CLAMP,
+        SUMMING,
+        ADC_RC,
+        BJT_CS,
+        PWR_COND,
+        SALLEN_KEY,
+        MFB,
+        LINREG,
+        IN_AMP,
+        BRIDGE,
+        RAIL_SPLIT,
+        INPUT_PROT,
+    ],
 )
 def test_cell_gates_all_pass(cell_dir: Path):
     report = run_cell_gates(cell_dir)
