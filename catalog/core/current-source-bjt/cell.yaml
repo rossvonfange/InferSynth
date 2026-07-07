@@ -56,6 +56,21 @@ bindings:
   R1: "(vref_volts - 0.65) / i_out_amps"
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "BC847B"
+      manufacturer: "Nexperia"
+      footprint: "Package_TO_SOT_SMD:SOT-23"
+      maps: {Q1: true}
+      sourcing: {lcsc: C2145}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true}
+      sourcing: {lcsc: C25804}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Device:Q_NPN
   qualification: null

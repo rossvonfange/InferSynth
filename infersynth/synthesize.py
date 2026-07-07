@@ -83,6 +83,20 @@ class SynthesisResult:
     #: design-level netlist partition-equivalence summary when verify ran
     #: (round 2 / SEED_PLAN §2); None otherwise
     design_netlist_summary: str | None = None
+    #: (bound, total, unbound_refs) part-binding tally across instantiated cells
+    #: (SEED_PLAN crit 4); (0, 0, ()) when nothing was instantiated
+    bom_tally: tuple[int, int, tuple[str, ...]] = (0, 0, ())
+
+    @property
+    def bom_summary(self) -> str:
+        """The ``bom:`` REPORT line — "N/N parts bound" or a loud unbound note."""
+        bound, total, unbound = self.bom_tally
+        if unbound:
+            return (
+                f"[note] {len(unbound)} unbound — {bound}/{total} parts bound: "
+                f"{', '.join(unbound)}"
+            )
+        return f"{bound}/{total} parts bound"
 
     @property
     def all_decided(self) -> bool:
@@ -227,6 +241,12 @@ def synthesize(
                 )
             )
 
+    # MPN-level part binding tally (SEED_PLAN crit 4): the emitter has already
+    # stamped each instantiated child; recompute the per-cell binding here so
+    # the report/CLI can state "N/N parts bound" and list any unbound refs
+    # (namespaced by instance so they're globally unique, like the stamped refs).
+    bom_tally = _bom_tally(instantiated, catalog)
+
     # NETFLOW stage 1: infer the net set (rails always; intra-chain when a
     # winner chain has >1 cell) and emit it onto the design.
     wiring_plan: WiringPlan | None = None
@@ -302,9 +322,33 @@ def synthesize(
         erc_summary=erc_summary,
         design_sim=design_sim,
         design_netlist_summary=design_netlist_summary,
+        bom_tally=bom_tally,
     )
     result.report_path.write_text(_render_report(result, catalog), encoding="utf-8")
     return result
+
+
+def _bom_tally(
+    instantiated: list[InstantiatedCell], catalog: Catalog
+) -> tuple[int, int, tuple[str, ...]]:
+    """(bound, total, unbound_refs) over every instantiated cell's parts.
+
+    Each cell's refs are namespaced by instance name so an unbound ref reads
+    unambiguously across a multi-sheet design; the counts mirror what the
+    emitter stamped (same :func:`bind_parts`)."""
+    from infersynth.bind.parts import bind_parts
+
+    bound = total = 0
+    unbound: list[str] = []
+    for inst in instantiated:
+        cell = catalog.cells.get(inst.cell_key)
+        if cell is None:
+            continue
+        res = bind_parts(cell)
+        bound += len(res.bindings)
+        total += len(res.refs)
+        unbound.extend(f"{inst.instname}.{ref}" for ref in res.unbound)
+    return bound, total, tuple(unbound)
 
 
 def _erc_report(root: Path, plan: WiringPlan) -> str:
@@ -522,6 +566,17 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
             "## Design-level netlist partition-equivalence (reported, not gated)",
             "",
             f"{result.design_netlist_summary}",
+        ]
+    if result.instantiated:
+        lines += [
+            "",
+            "## Part binding (MPN-level, SEED_PLAN crit 4)",
+            "",
+            f"bom: {result.bom_summary}",
+            "",
+            "Each instantiated symbol carries a stamped Footprint + hidden "
+            "MPN/Manufacturer; run `infersynth bom --design <dir>` for the "
+            "grouped CSV.",
         ]
     lines.append("")
     return "\n".join(lines)

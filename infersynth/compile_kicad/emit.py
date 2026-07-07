@@ -187,6 +187,93 @@ def _renumber_refs(text: str, offset: int) -> str:
     return head + tail
 
 
+def _bare_ref(ref: str, offset: int) -> str:
+    """Undo :func:`_bump_ref`: recover the fragment's bare ref from a renumbered
+    one so a stamped symbol maps back to its ``bind_parts`` :class:`PartBinding`.
+    ``offset == 0`` (or a virtual ``#`` ref) is the identity."""
+    if offset == 0 or ref.startswith("#"):
+        return ref
+    m = _REF_SPLIT_RE.match(ref)
+    if not m:
+        return ref
+    prefix, digits = m.groups()
+    return f"{prefix}{int(digits) - offset}"
+
+
+def _instance_property(name: str, value: str, at: str, indent: str) -> str:
+    """A hidden instance-symbol ``(property ...)`` as a single line, prefixed
+    with *indent* so it sits among a symbol's own properties.
+
+    Single-line form is deliberately format-agnostic: the cell fragments come in
+    two shapes — pretty tab-indented and compact space-indented — and KiCad's
+    s-expression parser is whitespace-insensitive, so one line places cleanly in
+    either without matching the surrounding block's exact indentation. *at* is
+    the ``"x y rot"`` coordinate string reused from the symbol's Footprint
+    property so the (hidden) field stays on-grid."""
+    esc = value.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        f'{indent}(property "{name}" "{esc}" (at {at}) (hide yes) '
+        f"(effects (font (size 1.27 1.27))))\n"
+    )
+
+
+_FP_VALUE_RE = re.compile(r'(\(property "Footprint" ")([^"]*)(")')
+# Leading whitespace + the Footprint property opening (both fragment formats).
+_FP_LINE_RE = re.compile(r'(?m)^([ \t]*)\(property "Footprint" "')
+# The Footprint property's own (at x y rot), reused for the stamped fields.
+_FP_AT_RE = re.compile(r'\(property "Footprint" "[^"]*"\s*\(at ([^)]*)\)')
+
+
+def _stamp_segment(seg: str, bindings: dict, offset: int) -> str:
+    """Stamp one instance-symbol segment: set its Footprint to the bound part's
+    footprint and inject hidden ``MPN`` + ``Manufacturer`` sibling properties
+    (as single lines just before the Footprint property — sibling order is
+    irrelevant to KiCad). Segments whose ref has no binding (or no Footprint
+    slot) pass through untouched."""
+    mref = _REF_PROP_RE.search(seg)
+    if mref is None:
+        return seg
+    binding = bindings.get(_bare_ref(mref.group(2), offset))
+    if binding is None:
+        return seg
+    mline = _FP_LINE_RE.search(seg)
+    if mline is None:  # no Footprint property to stamp onto — leave the symbol be
+        return seg
+    at_m = _FP_AT_RE.search(seg)
+    at = at_m.group(1) if at_m else "0 0 0"
+    indent = mline.group(1)
+    inject = _instance_property("MPN", binding.mpn, at, indent) + _instance_property(
+        "Manufacturer", binding.manufacturer, at, indent
+    )
+    # set the Footprint value in place, then prepend the two stamped siblings
+    # before the Footprint property line.
+    seg = seg[: mline.start()] + inject + seg[mline.start() :]
+    mfp = _FP_VALUE_RE.search(seg)
+    return seg[: mfp.start(2)] + binding.footprint + seg[mfp.end(2) :]
+
+
+def _stamp_parts(text: str, bindings: dict, offset: int) -> str:
+    """Stamp every bound instance symbol in a copied child schematic.
+
+    Splits the per-instance region (everything past the first ``(lib_id``) into
+    one segment per instance symbol and stamps each. ``(lib_symbols ...)`` — the
+    whole head before the first instance symbol — is never touched.
+    """
+    if not bindings:
+        return text
+    idx = text.find(_FIRST_INSTANCE_SYMBOL)
+    if idx == -1:
+        return text
+    head, tail = text[:idx], text[idx:]
+    starts = [m.start() for m in re.finditer(re.escape(_FIRST_INSTANCE_SYMBOL), tail)]
+    starts.append(len(tail))
+    out = [
+        _stamp_segment(tail[starts[i] : starts[i + 1]], bindings, offset)
+        for i in range(len(starts) - 1)
+    ]
+    return head + "".join(out)
+
+
 def format_value(ohms: float) -> str:
     """Render a resistance in ohms as a compact KiCad value string.
 
@@ -473,8 +560,16 @@ def instantiate(
     # 4b. per-instance refdes namespace: instance k (1-based, in
     #     instantiation order) offsets its refs by k*100.
     index = parent_text.count("\n\t(sheet\n")  # existing child sheets (root is not one)
+    offset = (index + 1) * 100 if renumber_refs else 0
     if renumber_refs:
-        text = _renumber_refs(text, (index + 1) * 100)
+        text = _renumber_refs(text, offset)
+
+    # 4c. MPN-level part binding (SEED_PLAN crit 4): stamp each bound symbol's
+    #     Footprint + hidden MPN/Manufacturer. Refs map back to the cell's bare
+    #     refs via the same offset scheme; unbound refs are stamped with nothing.
+    from infersynth.bind.parts import bind_parts
+
+    text = _stamp_parts(text, bind_parts(cell).bindings, offset)
 
     # 5. write the child schematic.
     design_dir.mkdir(parents=True, exist_ok=True)

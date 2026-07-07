@@ -107,6 +107,76 @@ class TestSynthesizeEndToEnd:
         assert "Failed to load" not in proc.stderr
 
 
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "frds"
+
+
+class TestBridgeSenseBOM:
+    """SEED_PLAN crit 4 acceptance: BridgeSense synthesizes with every part
+    bound to an orderable MPN, and `infersynth bom` produces a zero-UNBOUND CSV."""
+
+    def _synth(self, tmp_path: Path):
+        from infersynth.spec import load_spec
+
+        spec = load_spec(EXAMPLES / "07_bridgesense_1.spec.yaml")
+        out = tmp_path / "bs"
+        result = synthesize(
+            str(spec.frd),
+            CORE,
+            out,
+            profile=spec.profile or "prototype",
+            name="bridgesense",
+            rail_aliases=dict(spec.rail_aliases) if spec.rail_aliases else None,
+            rail_binds=spec.rail_binds_mapping() if spec.rail_binds else None,
+        )
+        return result, out
+
+    def test_all_parts_bound(self, tmp_path: Path) -> None:
+        result, out = self._synth(tmp_path)
+        assert result.all_decided and not result.skipped
+        bound, total, unbound = result.bom_tally
+        assert unbound == ()
+        assert bound == total > 0
+        assert result.bom_summary == f"{bound}/{total} parts bound"
+        # the report carries the bom line.
+        assert f"bom: {bound}/{total} parts bound" in result.report_path.read_text()
+
+    def test_bom_csv_zero_unbound(self, tmp_path: Path) -> None:
+        from infersynth.bind.bom import build_bom
+
+        _, out = self._synth(tmp_path)
+        bom = build_bom(out)
+        assert not bom.unbound
+        assert bom.bound_parts == bom.total_parts > 0
+        # every line item is a real, orderable part (mpn + footprint present).
+        for line in bom.lines:
+            assert line.mpn and line.footprint and line.manufacturer
+        # a spot-check of expected seed parts.
+        mpns = {line.mpn for line in bom.lines}
+        assert {"OPA340NA/250", "L7805CV", "TL431AIDBZR"} <= mpns
+
+    @pytest.mark.kicad
+    def test_netlist_export_shows_footprints(self, tmp_path: Path) -> None:
+        if shutil.which("kicad-cli") is None:
+            pytest.skip("kicad-cli not on PATH")
+        _, out = self._synth(tmp_path)
+        child = next(out.glob("amp_01*.kicad_sch"))
+        netxml = out / "child_net.xml"
+        proc = subprocess.run(
+            [
+                "kicad-cli", "sch", "export", "netlist", "--format", "kicadxml",
+                "-o", str(netxml), str(child),
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        # The child alone can't fully elaborate (it's a sub-sheet), but the
+        # stamped Footprint fields are present in the source either way.
+        assert '"Footprint" "Package_TO_SOT_SMD:SOT-23-5"' in child.read_text()
+        if netxml.exists():
+            assert "Package_TO_SOT_SMD:SOT-23-5" in netxml.read_text()
+        else:
+            assert proc.returncode != 0  # sub-sheet export legitimately fails
+
+
 class TestDisambiguationPrimacy:
     def test_rule_carrying_cells_not_chained_when_rule_free_exists(self, demo_frd) -> None:
         from infersynth.catalog import Catalog

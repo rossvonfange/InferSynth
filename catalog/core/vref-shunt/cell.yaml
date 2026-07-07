@@ -46,6 +46,21 @@ bindings:
   R1: "r_bias_ohms"
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "TL431AIDBZR"
+      manufacturer: "Texas Instruments"
+      footprint: "Package_TO_SOT_SMD:SOT-23-3"
+      maps: {U1: true}
+      sourcing: {lcsc: C17561}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true}
+      sourcing: {lcsc: C25804}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Reference_Voltage:TL431DBZ
   qualification: null
