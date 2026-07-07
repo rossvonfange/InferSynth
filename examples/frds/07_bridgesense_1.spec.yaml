@@ -8,3 +8,16 @@ rail_aliases:
   VEE: GND      # single-supply design: negative rail is ground
   EXC_N: GND    # ratiometric bridge: excitation return tied to ground
   SHIELD: GND   # output-header shield tied to ground
+# Series power chain PWR-01 -> PRT-01 -> REG-01. Name-based rail grouping would
+# merge every VIN and every VOUT into one rail each (shorting the protection
+# stage out and putting two out-drivers on VOUT); per-requirement binds pin
+# each stage's ports onto the right series rail. REG-01's VOUT is left to
+# name-grouping (it keeps the VOUT rail the op-amp VCC aliases onto).
+rail_binds:
+  - {at: PWR-01, port: VIN, rail: VIN_RAW}   # connector raw input
+  - {at: PRT-01, port: VIN, rail: VIN_RAW}   #   -> protection stage input
+  - {at: PRT-01, port: VOUT, rail: V_PROT}   # protected (reverse-blocked) rail
+  - {at: REG-01, port: VIN, rail: V_PROT}    #   -> regulator input
+  - {at: REF-01, port: VIN, rail: VIN_RAW}   # shunt vref off the raw input rail
+                                             # (as before the split; keeps the
+                                             #  connector as its source)

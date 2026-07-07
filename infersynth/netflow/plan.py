@@ -107,6 +107,7 @@ def build_plan(
     feeds: tuple[FeedEdge, ...] = (),
     converge: bool = True,
     rail_aliases: dict[str, str] | None = None,
+    rail_binds: dict[tuple[str, str], str] | None = None,
 ) -> WiringPlan:
     """Assemble a :class:`WiringPlan` from instantiated cells + winner chains.
 
@@ -127,7 +128,9 @@ def build_plan(
     requests: list[WiringResolutionRequest] = []
 
     # --- tier 1: rails (all instances) ---
-    rail_plan = resolve_rails(instances, catalog, rail_aliases=rail_aliases)
+    rail_plan = resolve_rails(
+        instances, catalog, rail_aliases=rail_aliases, rail_binds=rail_binds
+    )
     diagnostics.extend(rail_plan.diagnostics)
     rail_nets = [
         Net(

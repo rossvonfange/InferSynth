@@ -97,7 +97,11 @@ synthesize gate (connectivity errors stop being expected).
 1. Rail resolver + intra-chain wiring consumption (no new syntax; ERC-zero
    becomes reachable for single-chain designs). **Landed** (stage 1,
    `infersynth/netflow/` + `compile_kicad/wiring.py`): rails group power ports
-   by exact NAME (voltage-aware rail identity is future); a rail source is an
+   by exact NAME (voltage-aware rail identity is future). Spec `rail_aliases`
+   merge rail names; spec `rail_binds` pin a specific (requirement, port) onto
+   a rail, overriding both — precedence **bind > alias > name** — which is
+   what makes series power chains (conn → protection → regulator)
+   expressible. A rail source is an
    out-direction power port or a connector cell's (`function=connectivity`)
    passive power port — anything else is an `undriven_rail` diagnostic. Chain
    links wire only under the unique-pairing rule (exactly one out on the
