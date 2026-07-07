@@ -97,6 +97,7 @@ Open `build/demo.kicad_sch` in KiCad. Requirements that don't match a catalog
 cell lint as `frd.no-primitive` instead of failing silently — try
 `infersynth lint` on any file in `examples/frds/` to see that diagnostic fire
 against the current catalog.
+See [examples/frds/README.md](examples/frds/README.md) for what each example FRD is for (01–06 are lint-diagnostic articles by design; 07 fully synthesizes).
 
 ## Surfaces
 
