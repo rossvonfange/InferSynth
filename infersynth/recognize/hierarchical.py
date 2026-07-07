@@ -36,6 +36,7 @@ from infersynth.recognize.segment import (
     SegmentationResult,
     segment,
 )
+from infersynth.recognize.subsystem import SubsystemMatch, match_subsystems
 
 __all__ = [
     "SCHEMA",
@@ -93,15 +94,30 @@ class CandidateCell:
 
 @dataclass(frozen=True)
 class SegmentRecognition:
-    """One segment's outcome: recognized instances and/or a promoted candidate."""
+    """One segment's outcome: a small-cell recognition, a subsystem-cell match,
+    and/or a promoted candidate. At most one of ``recognition.instances`` /
+    ``subsystem_match`` / ``candidate`` carries the outcome — small cell first,
+    then subsystem cell, else promote (see :func:`hierarchical_recognize`)."""
 
     segment: Segment
     recognition: RecognitionResult
     candidate: CandidateCell | None = None
+    subsystem_match: SubsystemMatch | None = None
+
+    @property
+    def recognized_small(self) -> bool:
+        """Recognized by the flat small-cell recognizer (exact subgraph)."""
+        return bool(self.recognition.instances)
+
+    @property
+    def recognized_subsystem(self) -> bool:
+        """Recognized as a subsystem cell (interface + composition)."""
+        return self.subsystem_match is not None
 
     @property
     def recognized(self) -> bool:
-        return bool(self.recognition.instances)
+        """Recognized at either tier (small cell or subsystem cell)."""
+        return self.recognized_small or self.recognized_subsystem
 
 
 @dataclass(frozen=True)
@@ -114,7 +130,18 @@ class HierarchicalResult:
 
     @property
     def recognized_segments(self) -> tuple[SegmentRecognition, ...]:
+        """Every segment recognized at either tier (small cell or subsystem)."""
         return tuple(s for s in self.per_segment if s.recognized)
+
+    @property
+    def recognized_small(self) -> tuple[SegmentRecognition, ...]:
+        """Segments recognized by the flat small-cell recognizer."""
+        return tuple(s for s in self.per_segment if s.recognized_small)
+
+    @property
+    def recognized_subsystem(self) -> tuple[SegmentRecognition, ...]:
+        """Segments recognized as subsystem cells (interface + composition)."""
+        return tuple(s for s in self.per_segment if s.recognized_subsystem)
 
     @property
     def promoted_candidates(self) -> tuple[CandidateCell, ...]:
@@ -127,16 +154,26 @@ class HierarchicalResult:
             "summary": {
                 "segments": len(self.per_segment),
                 "recognized_segments": len(recognized),
+                "recognized_small": len(self.recognized_small),
+                "recognized_subsystem": len(self.recognized_subsystem),
                 "promoted_candidates": len(self.promoted_candidates),
                 "residual_components": len(self.residual),
             },
-            "recognized": [
+            "recognized_small": [
                 {
                     "segment_id": s.segment.id,
                     "cell_keys": list(s.recognition.recognized_cell_keys),
                     "instances": [i.to_dict() for i in s.recognition.instances],
                 }
-                for s in recognized
+                for s in self.recognized_small
+            ],
+            "recognized_subsystem": [
+                {
+                    "segment_id": s.segment.id,
+                    "subsystem_cell": s.subsystem_match.cell_name,
+                    "match": s.subsystem_match.to_dict(),
+                }
+                for s in self.recognized_subsystem
             ],
             "promoted": [c.to_dict() for c in self.promoted_candidates],
             "residual": list(self.residual),
@@ -146,22 +183,34 @@ class HierarchicalResult:
         return json.dumps(self.to_dict(), indent=indent, sort_keys=False)
 
     def to_markdown(self) -> str:
-        recognized = self.recognized_segments
+        small = self.recognized_small
+        subsystem = self.recognized_subsystem
         promoted = self.promoted_candidates
         lines = [
             "# Hierarchical recognition report",
             "",
             f"- schema: `{SCHEMA}`",
             f"- segments: **{len(self.per_segment)}** "
-            f"({len(recognized)} recognized, {len(promoted)} promoted candidate(s))",
+            f"({len(small)} small-cell, {len(subsystem)} subsystem-cell, "
+            f"{len(promoted)} promoted candidate(s))",
             f"- true residual components: **{len(self.residual)}**",
             "",
         ]
-        if recognized:
-            lines += ["## Recognized segments", ""]
-            for s in recognized:
+        if small:
+            lines += ["## Recognized small cells", ""]
+            for s in small:
                 lines.append(
                     f"- **{s.segment.id}** -> {list(s.recognition.recognized_cell_keys)}"
+                )
+            lines.append("")
+        if subsystem:
+            lines += ["## Recognized subsystem cells", ""]
+            for s in subsystem:
+                m = s.subsystem_match
+                assert m is not None
+                lines.append(
+                    f"- **{s.segment.id}** -> {m.cell_name} "
+                    f"[{m.interface_kind} w{m.width}] (conf {m.confidence:.2f})"
                 )
             lines.append("")
         if promoted:
@@ -196,14 +245,26 @@ def hierarchical_recognize(
     *,
     labels: list[LabelClaim] | None = None,
 ) -> HierarchicalResult:
-    """Segment *design*, then recognize (or promote) each segment. Deterministic."""
+    """Segment *design*, then recognize (or promote) each segment. Deterministic.
+
+    Each segment is tried at two tiers before promotion (the subsystem-cell tier
+    closes the foundry loop — a segment promoted on one board is recognized on
+    the next): first the flat small-cell recognizer scoped to the segment; if it
+    finds nothing, the subsystem-cell matcher (interface + composition) against
+    the catalog's ``subsystem_cells``; only if BOTH miss is the segment promoted
+    to a provisional candidate cell.
+    """
     seg_result = segment(design, catalog, labels=labels)
+    subsystem_cells = getattr(catalog, "subsystem_cells", {}) or {}
     per_segment: list[SegmentRecognition] = []
     for seg in seg_result.segments:
         sub = restrict_netlist(design, seg.component_refs)
         rec = recognize(sub, catalog)
+        subsystem_match: SubsystemMatch | None = None
         candidate: CandidateCell | None = None
         if not rec.instances:
+            subsystem_match = match_subsystems(seg, subsystem_cells, design, catalog=catalog)
+        if not rec.instances and subsystem_match is None:
             boundary_kinds = tuple(
                 sorted({b.interface_kind for b in seg.boundary if b.interface_kind})
             )
@@ -216,7 +277,12 @@ def hierarchical_recognize(
                 boundary_kinds=boundary_kinds,
             )
         per_segment.append(
-            SegmentRecognition(segment=seg, recognition=rec, candidate=candidate)
+            SegmentRecognition(
+                segment=seg,
+                recognition=rec,
+                candidate=candidate,
+                subsystem_match=subsystem_match,
+            )
         )
     return HierarchicalResult(
         segmentation=seg_result,

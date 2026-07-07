@@ -429,10 +429,19 @@ def test_polarfire_board_segments_sanely(tmp_path: Path, catalog: Catalog) -> No
     # (3) determinism on the real board
     assert segment(design, catalog).to_json() == res.to_json()
 
-    # honest report of the recognize/promote/residual split (recognition finds
-    # nothing — no MPN in the .brd — so every segment promotes; that's expected).
+    # honest report of the recognize/promote/residual split. Flat small-cell
+    # recognition still finds nothing (no MPN in the .brd) — but the SUBSYSTEM
+    # tier now recognizes the interface-bounded segments (i2c / led / diff_pair
+    # clusters): the payoff, recognize > 0 on a real vendor board.
     hres = hierarchical_recognize(design, catalog)
     assert len(hres.per_segment) == len(res.segments)
+    assert len(hres.recognized_small) == 0  # no MPN => flat recognizer fires on nothing
+    assert len(hres.recognized_subsystem) > 0, "subsystem tier should recognize >0 segments"
+    recognized_cells = {s.subsystem_match.cell_name for s in hres.recognized_subsystem}
+    # the LED banks and the I2C bus are the reliably-present wins on this board.
+    assert "led-bank" in recognized_cells
+    # many segments (DDR, the FPGA core) still promote — expected, no cell yet.
+    assert len(hres.promoted_candidates) > 0
     # a large residual is expected (decoupling caps on rails, FPGA/DDR glue).
     assert len(hres.residual) > 0
 

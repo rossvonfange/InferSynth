@@ -1,0 +1,29 @@
+# LED bank — subsystem-cell tier (interface + composition, NOT a golden subgraph).
+#
+# A segment the segmenter labels `led` (its boundary carries an LED bus bundle —
+# >= BUS_MIN_WIDTH indexed LEDn nets, or a driver's LED outputs) whose members
+# are one-or-more current-limited (series R + LED) indicator pairs, optionally
+# behind a driver/buffer IC. A rigid subgraph can't span a 2-LED and an 8-LED
+# bank; the composition ranges do. The series-resistor / LED core is the small
+# cell `led-indicator` promoted to "a bank of N of them".
+kind: subsystem
+name: led-bank
+description: A bank of current-limited LED indicators (series R + LED pairs), optional driver.
+
+interface:
+  kind: led
+  min_width: 1
+  max_width: 32
+
+composition:
+  - {class: LED, role: indicator, count: [1, 16]}   # the LEDs
+  - {class: R,   role: series,    count: [1, 16]}    # per-LED current-limit resistors
+
+anchor: null
+
+params_stuffable:
+  - n_leds
+  - i_led_amps
+
+verification:
+  golden_ref_cell: "led-indicator@0.1.0"

@@ -1,0 +1,32 @@
+# I2C bus — subsystem-cell tier (interface + composition, NOT a golden subgraph).
+#
+# A segment the segmenter labels `i2c` (its boundary carries an i2c bundle:
+# SDA + SCL, detected by interfaces.yaml's i2c role signature) whose members
+# are the classic open-drain termination + one-or-more bus devices. Width is
+# the number of i2c interface nets crossing the boundary (2 for a bare SDA/SCL,
+# more when several i2c segments' bundles overlap on the frontier). The pull-up
+# value is recovered by inverting the member resistors through the existing
+# small cell `i2c-pullups` (golden_ref_cell) — the small cell is the subsystem's
+# electrical core; the subsystem cell is that core plus the devices hanging off
+# the bus. This is `i2c-pullups` promoted from "a resistor pair" to "an I2C bus".
+kind: subsystem
+name: i2c-bus
+description: An I2C bus segment — pull-up termination plus one or more bus devices.
+
+interface:
+  kind: i2c
+  min_width: 2
+  max_width: 8
+
+composition:
+  - {class: R, role: pullup, count: [1, 4]}   # SDA/SCL pull-ups (open-drain termination)
+  - {class: U, role: device, count: [1, 8]}   # bus controller / peripheral(s)
+
+anchor: null
+
+params_stuffable:
+  - bus_width
+  - r_pullup_ohms
+
+verification:
+  golden_ref_cell: "i2c-pullups@0.1.0"

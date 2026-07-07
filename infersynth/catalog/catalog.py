@@ -32,6 +32,13 @@ __all__ = ["Catalog", "CatalogError", "IdiomCollision"]
 _LIBRARY_KEYS = ("name", "description", "tier", "maintainer")
 _LIBRARY_TIERS = ("official", "community", "local")
 
+#: Reserved catalog-root directory holding subsystem-cell packages (the
+#: subsystem-cell tier, docs/HIERARCHICAL_RECOGNITION.md). It is NOT a cell
+#: library — its packages are ``subsystem_cell.yaml`` (interface + composition),
+#: not ``cell.yaml`` — so it is loaded by a separate discovery pass and excluded
+#: from the small-cell library layout detection below.
+_SUBSYSTEMS_DIRNAME = "subsystems"
+
 
 class CatalogError(ValueError):
     """Raised when a catalog directory fails validation."""
@@ -139,6 +146,11 @@ class Catalog:
         #: (bundles)"), threaded through to every cell the same way taxonomy
         #: is; empty when the catalog has no interfaces.yaml.
         self.interfaces: dict[str, InterfaceDef] = {}
+        #: subsystem-cell tier (docs/HIERARCHICAL_RECOGNITION.md): name ->
+        #: SubsystemCell, discovered from ``catalog/subsystems/`` (interface +
+        #: composition packages, distinct from small ``cell.yaml`` cells).
+        #: Empty when the catalog has no ``subsystems/`` directory.
+        self.subsystem_cells: dict[str, Any] = {}
 
     @classmethod
     def load(cls, catalog_dir: str | Path, strict: bool = True) -> Catalog:
@@ -176,7 +188,10 @@ class Catalog:
                 diags.append(str(exc))
         catalog.interfaces = interfaces or {}
 
-        subdirs = sorted(p for p in root.iterdir() if p.is_dir())
+        subsystems_dir = root / _SUBSYSTEMS_DIRNAME
+        subdirs = sorted(
+            p for p in root.iterdir() if p.is_dir() and p.name != _SUBSYSTEMS_DIRNAME
+        )
         library_dirs = [p for p in subdirs if _is_library_dir(p)]
 
         def _load_cell_dir(entry: Path, library: str | None, label: str) -> None:
@@ -209,6 +224,17 @@ class Catalog:
         else:
             for entry in subdirs:
                 _load_cell_dir(entry, None, entry.name)
+
+        if subsystems_dir.is_dir():
+            from infersynth.recognize.subsystem import (
+                SubsystemCellError,
+                load_subsystem_cells,
+            )
+
+            try:
+                catalog.subsystem_cells = load_subsystem_cells(subsystems_dir)
+            except SubsystemCellError as exc:
+                diags.extend(exc.diagnostics)
 
         diags.extend(str(c) for c in catalog.idiom_collisions())
         if diags:

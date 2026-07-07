@@ -1,0 +1,27 @@
+# Differential-pair link — subsystem-cell tier (interface + composition).
+#
+# A segment the segmenter labels `diff_pair` (its boundary carries a P/N
+# differential bundle) — a high-speed link with an optional termination /
+# AC-coupling passive network around the pair. It is defined by its INTERFACE
+# (a 2-net differential boundary), the passives being optional; a diff pair with
+# no local passives (a bare connector-to-connector routed pair) is still a
+# diff-pair-link. No golden_ref_cell: the recovered param is just the pair width.
+kind: subsystem
+name: diff-pair-link
+description: A differential signal pair link with optional termination / AC-coupling passives.
+
+interface:
+  kind: diff_pair
+  min_width: 2
+  max_width: 2
+
+composition:
+  - {class: R, role: termination, count: [0, 8]}   # optional termination
+  - {class: C, role: ac_couple,   count: [0, 8]}   # optional AC-coupling caps
+
+anchor: null
+
+params_stuffable:
+  - pair_width
+
+verification: null
