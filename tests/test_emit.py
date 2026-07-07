@@ -122,12 +122,17 @@ def test_sheet_instances_pages_are_sequential(tmp_path: Path) -> None:
 
 
 def test_byte_preserving_structure(tmp_path: Path) -> None:
-    # The child must be the fragment text with only slots, uuids, and the
-    # instance project/path changed — line count and lib_symbols untouched.
+    # The child must be the fragment text with only slots, uuids, the instance
+    # project/path, and MPN-level part stamping changed — lib_symbols untouched.
+    from infersynth.bind.parts import bind_parts
+
     _, p1, _ = _instantiate_both(tmp_path)
     frag = (CELL1 / "fragment.kicad_sch").read_text()
     child = p1.read_text()
-    assert child.count("\n") == frag.count("\n")
+    # Stamping injects two hidden single-line properties (MPN + Manufacturer)
+    # per bound ref; the Footprint value is set in place (no line change).
+    nbound = len(bind_parts(load_cell(CELL1)).bindings)
+    assert child.count("\n") == frag.count("\n") + nbound * 2
     # lib_symbols section is copied verbatim (byte-for-byte up to lib defs).
     frag_lib = frag[frag.index("(lib_symbols") : frag.index("\t(symbol\n\t\t(lib_id")]
     assert frag_lib in child
@@ -256,6 +261,49 @@ def test_instantiate_renumber_refs_false_preserves_bare_refs(tmp_path: Path) -> 
     assert '"R1"' in t1
     assert '"R2"' in t1
     assert '(reference "U1")' in t1
+
+
+# --------------------------------------------------------------------------
+# MPN-level part stamping (SEED_PLAN crit 4): each bound instance symbol gets
+# its Footprint set and hidden MPN/Manufacturer added, post-renumber.
+# --------------------------------------------------------------------------
+
+
+def test_stamping_sets_footprint_and_mpn_post_renumber(tmp_path: Path) -> None:
+    _, p1, _ = _instantiate_both(tmp_path)
+    child = p1.read_text()
+    # opamp cell (instance 1, +100): U101 is OPA340NA in SOT-23-5; R101/R102 Yageo 0603.
+    assert '"Footprint" "Package_TO_SOT_SMD:SOT-23-5"' in child
+    assert '"Footprint" "Resistor_SMD:R_0603_1608Metric"' in child
+    assert '"MPN" "OPA340NA/250"' in child
+    assert '"Manufacturer" "Texas Instruments"' in child
+    assert '"MPN" "RC0603FR-0710KL"' in child
+    # every bound ref carries an MPN (3 refs -> 3 MPN props).
+    assert child.count('(property "MPN"') == 3
+    assert child.count('(property "Manufacturer"') == 3
+
+
+def test_stamping_leaves_lib_symbols_untouched(tmp_path: Path) -> None:
+    _, p1, _ = _instantiate_both(tmp_path)
+    child = p1.read_text()
+    frag = (CELL1 / "fragment.kicad_sch").read_text()
+    frag_lib = frag[frag.index("(lib_symbols") : frag.index("\t(symbol\n\t\t(lib_id")]
+    # the lib_symbols block is copied verbatim — stamping only touches instances.
+    assert frag_lib in child
+    # no MPN/Manufacturer property leaked into the (lib_symbols ...) head.
+    head = child[: child.index("\t(symbol\n\t\t(lib_id")]
+    assert '"MPN"' not in head
+    assert '"Manufacturer"' not in head
+
+
+def test_stamping_maps_bare_ref_when_renumber_false(tmp_path: Path) -> None:
+    # WP4 cell-CI path (offset 0): bare refs still stamp correctly.
+    root = emit.new_design(tmp_path, "demo")
+    cell = load_cell(CELL1)
+    p1 = emit.instantiate(cell, {"gain": 100}, "dut", tmp_path, root, renumber_refs=False)
+    child = p1.read_text()
+    assert '"MPN" "OPA340NA/250"' in child
+    assert '"Footprint" "Resistor_SMD:R_0603_1608Metric"' in child
 
 
 @pytest.mark.kicad
