@@ -63,6 +63,23 @@ class MatchResult:
     diagnostics: tuple[Diagnostic, ...] = ()
     resolution_requests: tuple[ResolutionRequest, ...] = ()
 
+    def extracted_params(self, requirement_id: str, cell_key: str) -> dict[str, float]:
+        """The matcher-extracted, range-valid params for one candidate.
+
+        Returns ``{param_name: value}`` for every param the matcher bound and
+        range-checked (``problem is None``) on the ``cell_key`` candidate of
+        *requirement_id* — i.e. exactly the values a downstream stage
+        (:mod:`infersynth.synthesize`, :mod:`infersynth.fabric.fit`) treats as
+        FRD-pinned and checks against a site's ``params_fixed``. Empty when the
+        requirement surfaced no such candidate. Deterministic (candidate order);
+        this is the single public source of that projection — the private
+        callers in synthesize/fit delegate here.
+        """
+        for cand in self.candidates.get(requirement_id, ()):
+            if cand.cell_key == cell_key:
+                return {p.name: p.value for p in cand.params if p.problem is None}
+        return {}
+
 
 def _req_range(req: Requirement) -> Range:
     if req.source is None:

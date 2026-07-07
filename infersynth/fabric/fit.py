@@ -111,12 +111,8 @@ def extracted_params_for_winners(match_result, decision, catalog: Catalog) -> di
         cells = finalist.chain.cells
         if len(cells) != 1:
             continue  # v0 fit handles single-cell winners
-        cell_key = cells[0]
-        for cand in match_result.candidates.get(req_id, ()):
-            if cand.cell_key == cell_key:
-                out[req_id] = {p.name: p.value for p in cand.params if p.problem is None}
-                break
-        out.setdefault(req_id, {})
+        # single public projection — see :meth:`MatchResult.extracted_params`.
+        out[req_id] = match_result.extracted_params(req_id, cells[0])
     return out
 
 

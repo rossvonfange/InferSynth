@@ -138,10 +138,8 @@ def _params_for(
 
 
 def _extracted_params(mres: MatchResult, requirement_id: str, cell_key: str) -> dict[str, float]:
-    for cand in mres.candidates.get(requirement_id, ()):
-        if cand.cell_key == cell_key:
-            return {p.name: p.value for p in cand.params if p.problem is None}
-    return {}
+    """Thin wrapper delegating to the public :meth:`MatchResult.extracted_params`."""
+    return mres.extracted_params(requirement_id, cell_key)
 
 
 def synthesize(

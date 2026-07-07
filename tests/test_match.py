@@ -16,6 +16,7 @@ from infersynth.match import (
     AllocationError,
     EndpointSpec,
     MatchKnobs,
+    MatchResult,
     SimGateScorer,
     StructuralScorer,
     allocations_from_spec,
@@ -466,3 +467,45 @@ class TestWPBoundary:
         strict = match(one_req(req_text), cat, knobs=MatchKnobs(recall="strict"))
         semantic = match(one_req(req_text), cat, knobs=MatchKnobs(recall="semantic"))
         assert strict.candidates == semantic.candidates
+
+
+# --------------------------------------------------------------------------
+# public MatchResult.extracted_params accessor (Loom API-hardening #1)
+# --------------------------------------------------------------------------
+class TestExtractedParamsAccessor:
+    """``MatchResult.extracted_params`` is the single public projection that
+    synthesize/fit delegate to (a library consumer used to re-walk candidates)."""
+
+    def _mres(self) -> MatchResult:
+        from infersynth.lint.vocab import ParamBinding
+
+        cand = Candidate(
+            requirement_id="R-1",
+            cell_key="core/amp@1",
+            surfaced_by="idiom",
+            params=(
+                ParamBinding(name="gain", value=4.0, problem=None),
+                ParamBinding(name="rg_ohms", value=1000.0, problem=None),
+                # out-of-range binding is filtered out (problem is not None)
+                ParamBinding(name="bw_hz", value=-1.0, problem="below min"),
+            ),
+        )
+        return MatchResult(candidates={"R-1": (cand,)})
+
+    def test_returns_only_range_valid_params(self):
+        mres = self._mres()
+        assert mres.extracted_params("R-1", "core/amp@1") == {"gain": 4.0, "rg_ohms": 1000.0}
+
+    def test_unknown_requirement_or_cell_is_empty(self):
+        mres = self._mres()
+        assert mres.extracted_params("R-nope", "core/amp@1") == {}
+        assert mres.extracted_params("R-1", "core/other@1") == {}
+
+    def test_synthesize_and_fit_delegate_to_the_accessor(self):
+        # the private wrappers must return byte-identical shapes to the method.
+        from infersynth.synthesize import _extracted_params
+
+        mres = self._mres()
+        assert _extracted_params(mres, "R-1", "core/amp@1") == mres.extracted_params(
+            "R-1", "core/amp@1"
+        )
