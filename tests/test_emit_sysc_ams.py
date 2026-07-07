@@ -316,9 +316,14 @@ def test_gate_skips_loud_when_toolchain_absent(monkeypatch: pytest.MonkeyPatch) 
     assert "SystemC-AMS headers not found" in result.diagnostics[0]
 
 
-def test_gate_skip_wordings_are_distinct() -> None:
+def test_gate_skip_wordings_are_distinct(monkeypatch: pytest.MonkeyPatch) -> None:
     no_model = ams_simulation_cell_gate(load_cell(DECOUPLING)).diagnostics[0]
-    # The real machine has no toolchain, so this is the toolchain-absent skip.
+    # Force the toolchain-absent path regardless of whether this machine has a
+    # real SystemC-AMS toolchain installed (it may — see docs/SIM.md AMS §).
+    monkeypatch.setattr(
+        "infersynth.gates.ams_simulation.detect_toolchain",
+        lambda: AmsToolchain(available=False, reasons=("forced absent for this test",)),
+    )
     with_model = ams_simulation_cell_gate(load_cell(NONINV))
     assert with_model.status == GateStatus.SKIPPED
     assert no_model != with_model.diagnostics[0]

@@ -297,8 +297,43 @@ outcomes (DESIGN.md §4 — never a silent pass):
 
 The real compile/run path is implemented but its end-to-end test is
 `@pytest.mark.sysc_ams`, skipped cleanly when the toolchain is absent — the same
-convention WP4 used for `@pytest.mark.kicad`. **This machine has no SystemC-AMS
-toolchain**, so the gate SKIPs at outcome 2; nothing is ever faked.
+convention WP4 used for `@pytest.mark.kicad`.
+
+**A real toolchain is now installed on the dev box** (outside the repo, under
+`/home/cycix/Desktop/fai-tuner/_toolchains/`, never committed):
+
+* **SystemC 2.3.3** — Accellera reference implementation,
+  `github.com/accellera-official/systemc` tag `2.3.3`, built via its CMake
+  build (`-DCMAKE_CXX_STANDARD=17` to match the emitted Makefile) and installed
+  to `_toolchains/systemc-2.3.3-install` (a `lib-linux64 -> lib` symlink was
+  added so the emitted Makefile's `-L.../lib-linux64` resolves).
+* **SystemC-AMS 2.3** (proof-of-concept) — the official release lives behind
+  a registration form at coseda-tech.com/systemc-ams-proof-of-concept; the
+  identical sources are mirrored unregistered at
+  `github.com/sivertism/mirror-sysc-ams` (verified: matching `AUTHORS` /
+  `NOTICE` / `RELEASENOTES` pointing at the same coseda-tech.com release,
+  `src/scams/` present, Apache-2.0 `LICENSE`). Built with GNU autotools
+  (`configure --with-systemc=... CXXFLAGS=-std=c++17`) against the SystemC
+  2.3.3 install above, installed to `_toolchains/systemc-ams-2.3-install`.
+
+Source `_toolchains/env.sh` to export `SYSTEMC_HOME` / `SYSTEMC_AMS_HOME` /
+`LD_LIBRARY_PATH`, then `detect_toolchain()` reports available with **no
+repo-side changes needed** — the existing probe already matches this install
+layout. Run the real gate end-to-end with:
+
+```
+source /home/cycix/Desktop/fai-tuner/_toolchains/env.sh
+pytest -m sysc_ams
+infersynth gates --cell catalog/core/opamp-gain-noninverting
+```
+
+Both golden op-amp cells (`opamp-gain-noninverting`,
+`opamp-gain-x4-noninverting`) compile, run, and PASS `ams-simulation` for real,
+cross-validating the v0 `simulation` tier's gain/clipping numbers at the same
+operating point — the emitter's golden-file tests turned out to already match
+what a real SystemC-AMS kernel accepts; no emitter or Makefile fixes were
+needed. On a machine without `_toolchains/env.sh` sourced, the gate still SKIPs
+loudly as described above; nothing is ever faked.
 
 ### The emitter and the real-kernel seam
 
