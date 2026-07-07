@@ -6,5 +6,15 @@ the scoring engine is v2 scope.
 """
 
 from infersynth.bind.expr import BindingError, bind_cell, evaluate, free_names
+from infersynth.bind.parts import BindResult, PartBinding, bind_parts, fragment_refs
 
-__all__ = ["BindingError", "bind_cell", "evaluate", "free_names"]
+__all__ = [
+    "BindResult",
+    "BindingError",
+    "PartBinding",
+    "bind_cell",
+    "bind_parts",
+    "evaluate",
+    "fragment_refs",
+    "free_names",
+]

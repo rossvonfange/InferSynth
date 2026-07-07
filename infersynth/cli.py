@@ -283,6 +283,8 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
             print(f"  {d}")
     if result.design_netlist_summary is not None:
         print(f"design-netlist: {result.design_netlist_summary}")
+    if result.instantiated:
+        print(f"bom: {result.bom_summary}")
     if result.trace_path is not None:
         print(f"trace: {result.trace_path}")
     print(f"report: {result.report_path}")
@@ -406,6 +408,35 @@ def _cmd_decide(args: argparse.Namespace) -> int:
         for rid, status in undecided.items():
             print(f"undecided [{rid}]: {status}", file=sys.stderr)
         return 3
+    return 0
+
+
+def _cmd_bom(args: argparse.Namespace) -> int:
+    from infersynth.bind.bom import bom_to_csv, build_bom
+
+    design = Path(args.design)
+    if not design.is_dir():
+        print(f"infersynth bom: {design} is not a directory", file=sys.stderr)
+        return 2
+    try:
+        bom = build_bom(design)
+    except OSError as exc:
+        print(f"infersynth bom: {exc}", file=sys.stderr)
+        return 1
+
+    csv_text = bom_to_csv(bom)
+    if args.out:
+        Path(args.out).write_text(csv_text, encoding="utf-8")
+        print(f"wrote {args.out}", file=sys.stderr)
+    else:
+        sys.stdout.write(csv_text)
+    print(f"bom: {bom.summary}", file=sys.stderr)
+    if bom.unbound:
+        print(
+            f"infersynth bom: {len(bom.unbound)} UNBOUND part(s): {', '.join(bom.unbound)}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -661,6 +692,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-rounds", type=int, default=3, metavar="N", help="iteration budget (default: 3)"
     )
     p_pipe.set_defaults(func=_cmd_pipeline)
+
+    p_bom = sub.add_parser(
+        "bom",
+        help="emit a grouped BOM (Refs, Qty, Value, MPN, Manufacturer, Footprint) "
+        "from a synthesized design's stamped child sheets",
+    )
+    p_bom.add_argument(
+        "--design", required=True, metavar="DIR", help="synthesized design directory"
+    )
+    p_bom.add_argument(
+        "--out", metavar="bom.csv", help="write CSV to a file (default: stdout)"
+    )
+    p_bom.set_defaults(func=_cmd_bom)
 
     p_costs = sub.add_parser("costs", help="cost lockfile operations")
     costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)

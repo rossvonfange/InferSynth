@@ -117,6 +117,7 @@ _COST_KEYS = {
 }
 _ABSORBS_KEYS = {"function", "consumes", "template"}
 _EMBEDDING_KEYS = {"model_id", "dim", "vector", "text_hash"}
+_CANDIDATE_KEYS = {"mpn", "manufacturer", "footprint", "maps", "sourcing"}
 
 #: sentinel distinguishing "caller passed no taxonomy argument" (auto-discover)
 #: from "caller explicitly passed taxonomy=None" (catalog confirmed there is
@@ -392,6 +393,78 @@ def _validate_functions(
     return list(functions)
 
 
+def _golden_ref_set(verification: dict[str, Any], cell_dir: Path) -> set[str] | None:
+    """The fragment ref universe (from ``golden_netlist.txt``, minus KiCad
+    ``#``-virtual refs), or ``None`` when no readable golden netlist exists —
+    in which case candidate map-ref existence cannot be checked (SELECTION §6:
+    "validator checks map-refs exist in the fragment when candidates are
+    declared")."""
+    golden = verification.get("golden_netlist") if isinstance(verification, dict) else None
+    if not (isinstance(golden, str) and golden):
+        return None
+    path = cell_dir / golden
+    if not path.is_file():
+        return None
+    try:
+        from infersynth.gates.netlist import parse_golden_netlist
+
+        partition = parse_golden_netlist(path)
+    except Exception:  # noqa: BLE001 - a malformed golden netlist is reported elsewhere
+        return None
+    return {
+        ref for pins in partition.values() for ref, _pin in pins if not ref.startswith("#")
+    }
+
+
+def _validate_selection_candidates(
+    selection: Any, ref_set: set[str] | None, diags: list[str]
+) -> None:
+    """Validate ``selection.candidates`` when present (MPN-level part binding,
+    SEED_PLAN crit 4).
+
+    The rest of ``selection`` stays freeform (legacy tolerance). Each candidate
+    is ``{mpn, manufacturer, footprint, maps, sourcing?}``: ``mpn`` /
+    ``manufacturer`` / ``footprint`` are required non-empty strings; ``maps`` is
+    a non-empty mapping of fragment ref -> truthy (which refs this candidate
+    binds); ``sourcing`` (optional) is a freeform hooks mapping. Unknown
+    candidate keys are errors. When a golden-netlist *ref_set* is available,
+    every ``maps`` ref must exist in the fragment.
+    """
+    if not isinstance(selection, dict) or "candidates" not in selection:
+        return
+    candidates = selection.get("candidates")
+    if not isinstance(candidates, list):
+        diags.append("cell.yaml: selection.candidates must be a list of candidate mappings")
+        return
+    for i, cand in enumerate(candidates):
+        where = f"cell.yaml: selection.candidates[{i}]"
+        if not isinstance(cand, dict):
+            diags.append(f"{where} must be a mapping")
+            continue
+        unknown = sorted(set(cand) - _CANDIDATE_KEYS)
+        if unknown:
+            diags.append(f"{where}: unknown key(s) {unknown} (known: {sorted(_CANDIDATE_KEYS)})")
+        for key in ("mpn", "manufacturer", "footprint"):
+            val = cand.get(key)
+            if not isinstance(val, str) or not val:
+                diags.append(f"{where}.{key} is required and must be a non-empty string")
+        maps = cand.get("maps")
+        if not isinstance(maps, dict) or not maps:
+            diags.append(f"{where}.maps must be a non-empty mapping of fragment ref -> true")
+        else:
+            for ref in sorted(maps):
+                if not isinstance(ref, str) or not ref:
+                    diags.append(f"{where}.maps key {ref!r} must be a non-empty ref string")
+                elif ref_set is not None and ref not in ref_set:
+                    diags.append(
+                        f"{where}.maps references {ref!r}, which is not a fragment ref "
+                        f"(golden-netlist ref set: {sorted(ref_set)})"
+                    )
+        sourcing = cand.get("sourcing")
+        if sourcing is not None and not isinstance(sourcing, dict):
+            diags.append(f"{where}.sourcing must be a mapping (freeform sourcing hooks)")
+
+
 def _validate_costs(costs: Any, strict: bool, diags: list[str]) -> dict[str, Any]:
     """Validate the ``costs`` section (SELECTION.md sec 6; validator-checked,
     unused by v1)."""
@@ -647,6 +720,7 @@ def load_cell(
     )
 
     selection = _check_mapping(data.get("selection"), "cell.yaml: selection", diags)
+    _validate_selection_candidates(selection, _golden_ref_set(verification, path), diags)
     costs = _validate_costs(data.get("costs"), strict, diags)
     capacity = _validate_capacity(data.get("capacity"), diags)
     absorbs = _validate_absorbs(data.get("absorbs"), diags)
