@@ -25,6 +25,13 @@ ordering — two runs are byte-identical.
 
 from __future__ import annotations
 
+from infersynth.recognize.hierarchical import (
+    CandidateCell,
+    HierarchicalResult,
+    SegmentRecognition,
+    hierarchical_recognize,
+    restrict_netlist,
+)
 from infersynth.recognize.index import ReverseIndex, build_reverse_index
 from infersynth.recognize.invert import InversionResult, invert_params
 from infersynth.recognize.match import CellMatch, match_cell
@@ -34,18 +41,37 @@ from infersynth.recognize.recognizer import (
     RecognizedInstance,
     recognize,
 )
+from infersynth.recognize.segment import (
+    BoundaryPin,
+    LabelClaim,
+    Segment,
+    SegmentationResult,
+    classify_nets,
+    segment,
+)
 
 __all__ = [
+    "BoundaryPin",
+    "CandidateCell",
     "CellMatch",
     "Component",
     "DesignNetlist",
+    "HierarchicalResult",
     "InversionResult",
+    "LabelClaim",
     "RecognitionResult",
     "RecognizedInstance",
     "ReverseIndex",
+    "Segment",
+    "SegmentRecognition",
+    "SegmentationResult",
     "build_reverse_index",
+    "classify_nets",
+    "hierarchical_recognize",
     "invert_params",
     "load_design_netlist",
     "match_cell",
     "recognize",
+    "restrict_netlist",
+    "segment",
 ]
