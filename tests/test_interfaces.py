@@ -347,9 +347,9 @@ class TestCellInterfacesValidation:
         assert cell.interfaces["main"].type == "uart"
 
     def test_real_catalog_still_loads_with_interfaces_yaml_present(self):
-        # The real catalog/interfaces.yaml exists but none of the 17 real
-        # cells claim an interfaces: section (see report for rationale) --
-        # loading must still be strict-clean.
+        # The real catalog/interfaces.yaml exists; the BridgeSense diff-pair
+        # cells claim interface groups (the sensor chain wires by bundle) --
+        # loading must be strict-clean and the claim set exact.
         catalog = Catalog.load(GOLDEN_CATALOG)
         assert set(catalog.interfaces) == {
             "uart",
@@ -359,7 +359,14 @@ class TestCellInterfacesValidation:
             "diff_pair",
             "analog",
         }
-        assert all(c.interfaces == {} for c in catalog.cells.values())
+        claiming = {
+            key: sorted(cell.interfaces) for key, cell in catalog.cells.items() if cell.interfaces
+        }
+        assert claiming == {
+            "core/conn-sensor-4wire@0.1.0": ["sense"],
+            "core/bridge-interface@0.1.0": ["filtered_out", "sense_in"],
+            "core/instrumentation-amp-3opamp@0.1.0": ["diff_in"],
+        }
 
 
 class TestMates:

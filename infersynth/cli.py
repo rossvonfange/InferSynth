@@ -157,7 +157,7 @@ def _resolve_spec_inputs(args: argparse.Namespace, cmd: str):
     """Shared ``--spec``/``--frd``/``--profile``/``--weights`` resolution for
     ``synthesize``/``decide`` (WP-L1 item 2). ``--frd`` overrides a spec's
     ``frd:``; ``--profile``/``--weights`` override a spec's ``profile:``.
-    Returns ``(frd_path, profile, allocations, knobs, endpoints)`` or raises
+    Returns ``(frd_path, profile, allocations, knobs, endpoints, rail_aliases)`` or raises
     ``ValueError``/``SpecError`` (callers already catch both)."""
     import json
 
@@ -183,7 +183,8 @@ def _resolve_spec_inputs(args: argparse.Namespace, cmd: str):
     allocations = spec.allocations if spec is not None else None
     knobs = spec.knobs if spec is not None else None
     endpoints = spec.endpoints if spec is not None else None
-    return frd, profile, allocations, knobs, endpoints
+    rail_aliases = dict(spec.rail_aliases) if spec is not None and spec.rail_aliases else None
+    return frd, profile, allocations, knobs, endpoints, rail_aliases
 
 
 def _cmd_synthesize(args: argparse.Namespace) -> int:
@@ -196,7 +197,9 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     from infersynth.synthesize import synthesize
 
     try:
-        frd, profile, allocations, knobs, endpoints = _resolve_spec_inputs(args, "synthesize")
+        frd, profile, allocations, knobs, endpoints, rail_aliases = _resolve_spec_inputs(
+            args, "synthesize"
+        )
     except json.JSONDecodeError as exc:
         print(f"infersynth synthesize: --weights is not valid JSON: {exc}", file=sys.stderr)
         return 1
@@ -219,6 +222,7 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
             endpoints=endpoints,
             wiring=not args.no_wiring,
             verify=not args.no_wiring,
+            rail_aliases=rail_aliases,
         )
     except (OSError, ReqIFImportError, CatalogError, ValueError) as exc:
         print(f"infersynth synthesize: {exc}", file=sys.stderr)
@@ -264,7 +268,9 @@ def _cmd_decide(args: argparse.Namespace) -> int:
     from infersynth.spec import SpecError
 
     try:
-        frd, profile, allocations, knobs, endpoints = _resolve_spec_inputs(args, "decide")
+        frd, profile, allocations, knobs, endpoints, rail_aliases = _resolve_spec_inputs(
+            args, "decide"
+        )
     except json.JSONDecodeError as exc:
         print(f"infersynth decide: --weights is not valid JSON: {exc}", file=sys.stderr)
         return 1

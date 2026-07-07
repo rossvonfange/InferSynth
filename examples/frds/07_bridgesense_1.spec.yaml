@@ -1,0 +1,10 @@
+# Formal spec for BridgeSense-1 (examples/frds/07_bridgesense_1.md).
+# The FRD's [feeds:] pragmas carry the signal-path intent; this spec adds
+# what pragmas deliberately cannot express (NETFLOW): rail identity.
+frd: 07_bridgesense_1.md
+profile: prototype
+rail_aliases:
+  VCC: VOUT     # op-amp supplies ride the regulator's output rail
+  VEE: GND      # single-supply design: negative rail is ground
+  EXC_N: GND    # ratiometric bridge: excitation return tied to ground
+  SHIELD: GND   # output-header shield tied to ground

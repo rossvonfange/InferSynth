@@ -26,6 +26,16 @@ ports:
   OUT_N: {direction: out, kind: electrical}
   GND: {direction: in, kind: power}
 
+interfaces:
+  sense_in:
+    type: diff_pair
+    role: peripheral
+    map: {P: SENSE_P, N: SENSE_N}
+  filtered_out:
+    type: diff_pair
+    role: initiator
+    map: {P: OUT_P, N: OUT_N}
+
 idioms:
   keywords:
     - bridge interface

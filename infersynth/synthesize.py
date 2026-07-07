@@ -139,6 +139,7 @@ def synthesize(
     feeds: tuple[FeedEdge, ...] = (),
     wiring: bool = True,
     verify: bool = False,
+    rail_aliases: dict[str, str] | None = None,
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -220,7 +221,9 @@ def synthesize(
             for rid, outcome in decision.outcomes.items()
             if outcome.winner is not None
         }
-        wiring_plan = build_plan(instantiated, winner_chains, catalog, feeds=feeds)
+        wiring_plan = build_plan(
+            instantiated, winner_chains, catalog, feeds=feeds, rail_aliases=rail_aliases
+        )
         emit_wiring(root, wiring_plan, instantiated, catalog)
 
     # Full-hierarchy ERC is REPORTED, never hard-gated here (NETFLOW build

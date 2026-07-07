@@ -8,17 +8,19 @@ Power rails wire by name, tier 1; the feeds chain wires the signal path.)
 
 - SNS-01 The system shall provide a 4-wire sensor input connector. [feeds: CND-01]
 - CND-01 The system shall provide a bridge interface. [feeds: AMP-01]
-- AMP-01 The system shall provide an instrumentation amplifier with gain of 100. [feeds: FLT-01]
+- AMP-01 The system shall provide an instrumentation amplifier with gain of 100. [feeds: FLT-01:IN]
 - FLT-01 The system shall provide an active low-pass filter at 1000 Hz. [feeds: BUF-01]
 - BUF-01 The system shall provide a unity buffer. [feeds: DRV-01]
-- DRV-01 The system shall provide an adc driver. [feeds: OUT-01]
+- DRV-01 The system shall provide an adc driver. [feeds: OUT-01:OUT]
 - OUT-01 The system shall provide an output header.
 
 ## Power and references
 
-- PWR-01 The system shall provide a power input connector. [feeds: PRT-01]
-- PRT-01 The system shall provide reverse polarity protection. [feeds: REG-01]
+- PWR-01 The system shall provide a power input connector.
 - REG-01 The system shall provide a linear regulator.
-- REF-01 The system shall provide a voltage reference.
-- MID-01 The system shall provide a rail splitter for a virtual ground.
+  [D: reverse-polarity protection omitted in v1 — series power chains
+  (conn -> protection -> regulator) are inexpressible under name-based rail
+  grouping; per-instance rail binding is a round-2 work item]
+- REF-01 The system shall provide a voltage reference. [feeds: SNS-01:EXC_P]
+- MID-01 The system shall provide a rail splitter for a virtual ground. [feeds: AMP-01:REF] [feeds: FLT-01:REF] [feeds: OUT-01:REF]
 - DEC-01 The system shall provide a bypass capacitor.

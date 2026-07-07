@@ -54,6 +54,10 @@ class Net:
     name: str
     driven: bool = field(compare=False)
     members: tuple[tuple[str, str], ...] = field(compare=False)
+    #: rails only: True when the rail needs a PWR_FLAG at emission (driven by
+    #: a connector passive port, not by a real out-direction driver — one
+    #: driver per net, so hard-driven rails must NOT get a flag)
+    needs_flag: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,7 @@ def build_plan(
     catalog: Catalog,
     feeds: tuple[FeedEdge, ...] = (),
     converge: bool = True,
+    rail_aliases: dict[str, str] | None = None,
 ) -> WiringPlan:
     """Assemble a :class:`WiringPlan` from instantiated cells + winner chains.
 
@@ -122,10 +127,16 @@ def build_plan(
     requests: list[WiringResolutionRequest] = []
 
     # --- tier 1: rails (all instances) ---
-    rail_plan = resolve_rails(instances, catalog)
+    rail_plan = resolve_rails(instances, catalog, rail_aliases=rail_aliases)
     diagnostics.extend(rail_plan.diagnostics)
     rail_nets = [
-        Net(kind="rail", name=name, driven=name in rail_plan.driven, members=members)
+        Net(
+            kind="rail",
+            name=name,
+            driven=name in rail_plan.driven,
+            members=members,
+            needs_flag=name in rail_plan.driven and name not in rail_plan.hard_driven,
+        )
         for name, members in sorted(rail_plan.nets.items())
     ]
 
@@ -150,6 +161,12 @@ def build_plan(
                 )
             )
             wired_signal_ports.update(members)
+
+    # rail-adopted ELECTRICAL ports (declared ties like SHIELD: GND) are wired
+    # by the rail tier — count them so the residual/convergence accounting
+    # doesn't re-offer them as free signal ports.
+    for rnet in rail_nets:
+        wired_signal_ports.update(rnet.members)
 
     # --- tier 2: declared feeds (may close cycles) ---
     feeds_res = resolve_feeds(feeds, instances, catalog)

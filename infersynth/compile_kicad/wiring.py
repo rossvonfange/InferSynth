@@ -63,7 +63,7 @@ def emit_wiring(root: Path, plan: WiringPlan, instances, catalog: Catalog) -> No
     flag_anchors: set[tuple[str, str]] = set()
     any_flag = False
     for net in plan.nets:
-        if net.kind == "rail" and net.driven and net.members:
+        if net.kind == "rail" and net.needs_flag and net.members:
             flag_anchors.add(net.members[0])
             any_flag = True
         for instname, port in net.members:

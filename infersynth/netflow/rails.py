@@ -51,6 +51,10 @@ class RailPlan:
     nets: dict[str, tuple[tuple[str, str], ...]]
     #: rail names that carry at least one recognized source
     driven: frozenset[str]
+    #: rails whose source is a real out-direction driver (regulator VOUT etc.)
+    #: — these need NO PWR_FLAG (one driver per net; playbook rule); rails
+    #: driven only by a connector's passive port DO need the flag.
+    hard_driven: frozenset[str] = frozenset()
     #: loud ``undriven_rail`` diagnostics (one per undriven rail)
     diagnostics: tuple[str, ...] = field(default_factory=tuple)
 
@@ -64,25 +68,52 @@ def _is_source(cell, spec) -> bool:
     return False
 
 
-def resolve_rails(instances, catalog: Catalog) -> RailPlan:
+def resolve_rails(
+    instances, catalog: Catalog, rail_aliases: dict[str, str] | None = None
+) -> RailPlan:
     """Group every power-kind port by name into rail nets (v0 exact-name).
 
     *instances* is any sequence exposing ``instname`` and ``cell_key``.
+    ``rail_aliases`` (spec ``rail_aliases:``, NETFLOW tier 2) maps a rail NAME
+    onto another — e.g. ``{VCC: VOUT, VEE: GND}`` merges every ``VCC`` port
+    (an explicitly-named ELECTRICAL port is adopted into the target rail too —
+    a declared tie such as ``SHIELD: GND``; adoption is never inferred)
+    into the ``VOUT`` rail net (alias chains follow; cycles guarded). Members
+    keep their own port names; the net takes the canonical rail name.
     Returns a :class:`RailPlan`; rails with no source yield an
     ``undriven_rail`` diagnostic and are absent from ``driven``.
     """
+    aliases = dict(rail_aliases or {})
+
+    def _canon(name: str) -> str:
+        seen = {name}
+        while name in aliases:
+            name = aliases[name]
+            if name in seen:  # cycle guard: fall back to the last resolved name
+                break
+            seen.add(name)
+        return name
+
     members: dict[str, list[tuple[str, str]]] = {}
     sourced: set[str] = set()
+    hard: set[str] = set()
     for inst in instances:
         cell = catalog.cells.get(inst.cell_key)
         if cell is None:
             continue
         for pname, spec in cell.ports.items():
             if spec.get("kind") != _POWER:
-                continue
-            members.setdefault(pname, []).append((inst.instname, pname))
+                # an ELECTRICAL port is adopted into a rail only when the spec
+                # names it explicitly in rail_aliases (declared tie — e.g.
+                # EXC_N: GND, SHIELD: GND); never inferred.
+                if pname not in aliases:
+                    continue
+            rail = _canon(pname)
+            members.setdefault(rail, []).append((inst.instname, pname))
             if _is_source(cell, spec):
-                sourced.add(pname)
+                sourced.add(rail)
+                if spec.get("direction") == PortDirection.OUT.value:
+                    hard.add(rail)
 
     nets = {name: tuple(sorted(m)) for name, m in members.items()}
     diagnostics = tuple(
@@ -93,4 +124,9 @@ def resolve_rails(instances, catalog: Catalog) -> RailPlan:
         for name in sorted(nets)
         if name not in sourced
     )
-    return RailPlan(nets=nets, driven=frozenset(sourced), diagnostics=diagnostics)
+    return RailPlan(
+        nets=nets,
+        driven=frozenset(sourced),
+        hard_driven=frozenset(hard),
+        diagnostics=diagnostics,
+    )

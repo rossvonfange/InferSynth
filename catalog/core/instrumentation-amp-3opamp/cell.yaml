@@ -27,6 +27,12 @@ ports:
   VCC: {direction: in, kind: power}
   VEE: {direction: in, kind: power}
 
+interfaces:
+  diff_in:
+    type: diff_pair
+    role: peripheral
+    map: {P: INP, N: INN}
+
 idioms:
   keywords:
     - instrumentation amplifier

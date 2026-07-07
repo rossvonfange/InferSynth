@@ -19,6 +19,12 @@ ports:
   SENSE_N: {direction: passive, kind: electrical}
   EXC_N: {direction: passive, kind: electrical}
 
+interfaces:
+  sense:
+    type: diff_pair
+    role: initiator
+    map: {P: SENSE_P, N: SENSE_N}
+
 idioms:
   keywords:
     - sensor connector

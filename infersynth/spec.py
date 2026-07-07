@@ -49,7 +49,10 @@ from infersynth.match.propagate import EndpointSpec
 
 __all__ = ["Spec", "SpecError", "FeedEdge", "load_spec"]
 
-_TOP_KEYS = {"frd", "allocations", "profile", "endpoints", "knobs", "feeds", "pins", "forbid_pack"}
+_TOP_KEYS = {
+    "frd", "allocations", "profile", "endpoints", "knobs",
+    "feeds", "pins", "forbid_pack", "rail_aliases",
+}
 _KNOB_KEYS = {"recall", "allocation", "absorption"}
 _ABSORPTION_VALUES = ("off", "conservative", "aggressive")
 
@@ -91,6 +94,8 @@ class Spec:
     pins: dict[str, str] = field(default_factory=dict)
     #: NETFLOW per-requirement pack forbid (SELECTION §5); requirement ids.
     forbid_pack: frozenset[str] = frozenset()
+    #: NETFLOW rail aliasing: alias rail name -> canonical rail name (e.g. VCC -> VOUT)
+    rail_aliases: dict[str, str] = field(default_factory=dict)
 
     def netflow_mapping(self) -> dict[str, object]:
         """The three NETFLOW keys as a YAML-round-trippable mapping (dump side).
@@ -106,6 +111,8 @@ class Spec:
             ]
         if self.pins:
             out["pins"] = dict(self.pins)
+        if self.rail_aliases:
+            out["rail_aliases"] = dict(sorted(self.rail_aliases.items()))
         if self.forbid_pack:
             out["forbid_pack"] = sorted(self.forbid_pack)
         return out
@@ -204,6 +211,20 @@ def _load_forbid_pack(raw: Any, where: str) -> frozenset[str]:
     return frozenset(raw)
 
 
+def _load_rail_aliases(raw: Any, where: str) -> dict[str, str]:
+    if raw is None:
+        return {}
+    mapping = _require_mapping(raw, where)
+    aliases: dict[str, str] = {}
+    for alias, target in mapping.items():
+        if not (isinstance(alias, str) and alias and isinstance(target, str) and target):
+            raise SpecError(f"{where}: entries must be non-empty rail-name strings (alias: target)")
+        if alias == target:
+            raise SpecError(f"{where}[{alias!r}]: a rail cannot alias itself")
+        aliases[alias] = target
+    return aliases
+
+
 def load_spec(path: str | Path) -> Spec:
     """Load and validate a ``spec.yaml`` file. Raises :class:`SpecError`."""
     spec_path = Path(path)
@@ -243,6 +264,7 @@ def load_spec(path: str | Path) -> Spec:
     feeds = _load_feeds(raw.get("feeds"), f"{spec_path}: feeds")
     pins = _load_pins(raw.get("pins"), f"{spec_path}: pins")
     forbid_pack = _load_forbid_pack(raw.get("forbid_pack"), f"{spec_path}: forbid_pack")
+    rail_aliases = _load_rail_aliases(raw.get("rail_aliases"), f"{spec_path}: rail_aliases")
 
     return Spec(
         path=spec_path,
@@ -255,4 +277,5 @@ def load_spec(path: str | Path) -> Spec:
         feeds=feeds,
         pins=pins,
         forbid_pack=forbid_pack,
+        rail_aliases=rail_aliases,
     )
