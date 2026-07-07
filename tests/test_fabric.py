@@ -144,6 +144,44 @@ class TestLoader:
         with pytest.raises(ValueError):
             derive_ref_map(["R1", "R2"], ["R101"])
 
+    def test_require_board_false_validates_manifest_before_board_exists(
+        self, catalog, tmp_path
+    ) -> None:
+        # a producer (Loom) lints the fabric block before the board is routed:
+        # the board file does NOT exist yet, but structure still validates.
+        (tmp_path / "fabric.yaml").write_text(
+            "fabric:\n"
+            "  name: pre-route\n"
+            "  board: fabric.kicad_pcb\n"
+            "  sites:\n"
+            "    - {id: a, cell: core/decoupling, refs: [C1]}\n"
+        )
+        # default (require_board=True) still rejects the missing board -> unchanged
+        with pytest.raises(FabricError) as exc:
+            load_fabric(tmp_path / "fabric.yaml", catalog)
+        assert any("does not exist" in d for d in exc.value.diagnostics)
+        # require_board=False loads a validated, manifest-only fabric
+        fab = load_fabric(tmp_path / "fabric.yaml", catalog, require_board=False)
+        assert fab.name == "pre-route"
+        assert [s.id for s in fab.sites] == ["a"]
+        assert fab.board_path == tmp_path / "fabric.kicad_pcb"  # where it WILL live
+        assert not fab.board_path.is_file()
+
+    def test_require_board_false_still_enforces_other_validation(
+        self, catalog, tmp_path
+    ) -> None:
+        # structural errors are NOT suppressed by require_board=False.
+        (tmp_path / "fabric.yaml").write_text(
+            "fabric:\n"
+            "  name: bad\n"
+            "  board: fabric.kicad_pcb\n"
+            "  sites:\n"
+            "    - {id: a, cell: core/does-not-exist, refs: [U1]}\n"
+        )
+        with pytest.raises(FabricError) as exc:
+            load_fabric(tmp_path / "fabric.yaml", catalog, require_board=False)
+        assert any("does-not-exist" in d for d in exc.value.diagnostics)
+
 
 # --------------------------------------------------------------------------
 # deliverable 2: fit engine

@@ -301,13 +301,23 @@ def _validate_tie_off(
     return out
 
 
-def load_fabric(fabric_yaml: str | Path, catalog: Catalog) -> Fabric:
+def load_fabric(
+    fabric_yaml: str | Path, catalog: Catalog, *, require_board: bool = True
+) -> Fabric:
     """Load + validate a ``fabric.yaml`` against *catalog* (deliverable 1).
 
     *fabric_yaml* is the path to the ``fabric.yaml`` file (its directory is the
     fabric root; ``board`` resolves relative to it). Raises :class:`FabricError`
     collecting every diagnostic: refs unique across sites, cells exist in the
     catalog, ``tie_off`` policy enum, and the board file exists.
+
+    ``require_board`` (default True preserves today's behavior) gates only the
+    board-file *existence* check: pass ``require_board=False`` to lint a fabric
+    manifest **before its board is routed** (a producer such as Loom emits the
+    ``fabric:`` block naming where the board will live, then validates structure
+    pre-routing). The returned :class:`Fabric` still carries ``board_path`` (the
+    path the board *will* occupy); nothing else in the loader depends on the
+    board file, so a ``require_board=False`` load is otherwise identical.
     """
     path = Path(fabric_yaml)
     if not path.is_file():
@@ -337,7 +347,7 @@ def load_fabric(fabric_yaml: str | Path, catalog: Catalog) -> Fabric:
     board_path = fabric_dir / str(board) if isinstance(board, str) and board else None
     if not isinstance(board, str) or not board:
         diags.append("fabric.board is required and must be a non-empty filename")
-    elif not board_path.is_file():  # type: ignore[union-attr]
+    elif require_board and not board_path.is_file():  # type: ignore[union-attr]
         diags.append(f"fabric.board file {board!r} does not exist ({board_path})")
 
     raw_sites = fab.get("sites")
