@@ -29,6 +29,8 @@ The remaining docs (FABRIC, IR, LSP, TCL, RECON_HARVEST, SEED_PLAN,
 CATALOG_GROWTH) are reference material — read them when the task in front of
 you touches that area, not up front.
 
+Outside `docs/`: [../examples/frds/README.md](../examples/frds/README.md) explains the example-FRD corpus (01–06 are lint-diagnostic test articles by design; 07 BridgeSense is the one that fully synthesizes).
+
 ## Per-doc notes
 
 ### [DESIGN.md](DESIGN.md) — vision / spec
