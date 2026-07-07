@@ -149,8 +149,9 @@ class TestNetflowThreading:
             feeds=(FeedEdge("R-2", "R-5", "IN2"),),
         )
         report = result.report_path.read_text(encoding="utf-8")
-        assert "Declared feeds (not yet wired)" in report
-        assert "`R-2` → `R-5.IN2`" in report
+        assert "## Declared feeds" in report
+        # the edge is rendered with its qualifier and a per-edge status column.
+        assert "`R-2` → `R-5:IN2`" in report
         assert result.feeds == (FeedEdge("R-2", "R-5", "IN2"),)
 
 
