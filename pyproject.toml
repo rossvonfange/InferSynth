@@ -48,6 +48,7 @@ addopts = "-q"
 markers = [
     "kicad: requires kicad-cli on PATH (skipped cleanly when absent)",
     "sysc_ams: requires a SystemC-AMS toolchain (skipped cleanly when absent)",
+    "slow: long-running (multi-second) simulation tests",
 ]
 
 [tool.ruff]

@@ -47,14 +47,50 @@ from infersynth.match.allocation import AllocationError, AllocationTable, alloca
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
 
-__all__ = ["Spec", "SpecError", "FeedEdge", "RailBind", "load_spec"]
+__all__ = [
+    "Spec",
+    "SpecError",
+    "FeedEdge",
+    "RailBind",
+    "TbStimulus",
+    "TbCheck",
+    "DesignTestbench",
+    "load_spec",
+]
 
 _TOP_KEYS = {
     "frd", "allocations", "profile", "endpoints", "knobs",
-    "feeds", "pins", "forbid_pack", "rail_aliases", "rail_binds",
+    "feeds", "pins", "forbid_pack", "rail_aliases", "rail_binds", "testbench",
 }
 _KNOB_KEYS = {"recall", "allocation", "absorption"}
 _ABSORPTION_VALUES = ("off", "conservative", "aggressive")
+
+# --- design-simulation testbench (SEED_PLAN §1 crit 3; docs/SIM.md design tier) ---
+# Strict schema: each stimulus/check kind declares exactly its required and
+# optional keys; any unknown kind or key is a SpecError. Net names refer to the
+# synthesized WiringPlan's net names (rails by rail name; feed nets by their
+# f_SRC_DST[_ROLE] name; the SYNTHESIS.md "Wired nets" table is how an author
+# discovers them). Values are coerced to float/int and validated here so the
+# design-simulation gate can trust the loaded testbench.
+_STIMULUS_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    # kind: (required keys, optional keys)  -- "signal" + "kind" are implicit
+    "sine": (frozenset({"amplitude", "freq_hz"}), frozenset({"offset", "phase"})),
+    "dc": (frozenset({"value"}), frozenset()),
+}
+_CHECK_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "amplitude_ratio": (
+        frozenset({"input", "output", "expected", "tol_pct"}),
+        frozenset(),
+    ),
+    "settles_to": (
+        frozenset({"signal", "value", "tol"}),
+        frozenset({"after_step"}),
+    ),
+    "clipped_within": (
+        frozenset({"signal", "lo", "hi"}),
+        frozenset({"eps"}),
+    ),
+}
 
 
 class SpecError(ValueError):
@@ -94,6 +130,50 @@ class RailBind:
 
 
 @dataclass(frozen=True)
+class TbStimulus:
+    """One design-sim stimulus: a source ``kind`` driving a WiringPlan net.
+
+    ``params`` holds the kind's numeric fields (sine: ``amplitude``/``freq_hz``
+    (+optional ``offset``/``phase``); dc: ``value``), already coerced to float.
+    """
+
+    signal: str
+    kind: str
+    params: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TbCheck:
+    """One design-sim assertion over the composed traces.
+
+    ``kind`` is ``amplitude_ratio`` / ``settles_to`` / ``clipped_within``;
+    ``params`` holds that kind's fields (net names as strings, thresholds as
+    numbers). The gate maps each to an :mod:`infersynth.sim.checks` helper.
+    """
+
+    kind: str
+    params: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DesignTestbench:
+    """A whole-design behavioral testbench (spec ``testbench:`` key, v0).
+
+    ``rails`` maps every rail net name to a DC voltage (a rail net absent here
+    is an error at build time). ``dt``/``n_steps`` set the composed run; a
+    multi-rate chain must pick ``dt`` small enough for its fastest pole (see the
+    BridgeSense testbench note). ``stimuli`` drive nets; ``checks`` assert over
+    the recorded traces.
+    """
+
+    rails: dict[str, float]
+    dt: float
+    n_steps: int
+    stimuli: tuple[TbStimulus, ...] = ()
+    checks: tuple[TbCheck, ...] = ()
+
+
+@dataclass(frozen=True)
 class Spec:
     """A loaded ``spec.yaml`` (formal-spec artifact, WP-L1)."""
 
@@ -120,6 +200,8 @@ class Spec:
         """The rail binds as the ``{(requirement_id, port): rail}`` mapping the
         rail resolver consumes (NETFLOW ``rail_binds`` threading)."""
         return {(b.at, b.port): b.rail for b in self.rail_binds}
+    #: design-simulation testbench (SEED_PLAN §1 crit 3); None when unspecified.
+    testbench: DesignTestbench | None = None
 
     def netflow_mapping(self) -> dict[str, object]:
         """The three NETFLOW keys as a YAML-round-trippable mapping (dump side).
@@ -276,6 +358,102 @@ def _load_rail_binds(raw: Any, where: str) -> tuple[RailBind, ...]:
         seen.add(key)
         binds.append(RailBind(at=entry["at"], port=entry["port"], rail=entry["rail"]))
     return tuple(binds)
+def _as_number(value: Any, where: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SpecError(f"{where} must be a number, got {value!r}")
+    return float(value)
+
+
+def _load_tb_stimulus(entry: Any, where: str) -> TbStimulus:
+    entry = _require_mapping(entry, where)
+    if not (isinstance(entry.get("signal"), str) and entry["signal"]):
+        raise SpecError(f"{where}.signal must be a non-empty net-name string")
+    kind = entry.get("kind")
+    if kind not in _STIMULUS_KEYS:
+        raise SpecError(
+            f"{where}.kind must be one of {sorted(_STIMULUS_KEYS)}, got {kind!r}"
+        )
+    required, optional = _STIMULUS_KEYS[kind]
+    body = set(entry) - {"signal", "kind"}
+    missing = sorted(required - body)
+    if missing:
+        raise SpecError(f"{where}: {kind} stimulus missing key(s) {missing}")
+    unknown = sorted(body - required - optional)
+    if unknown:
+        raise SpecError(f"{where}: {kind} stimulus has unknown key(s) {unknown}")
+    params = {k: _as_number(entry[k], f"{where}.{k}") for k in (required | optional) & body}
+    return TbStimulus(signal=entry["signal"], kind=kind, params=params)
+
+
+def _load_tb_check(entry: Any, where: str) -> TbCheck:
+    entry = _require_mapping(entry, where)
+    kind = entry.get("kind")
+    if kind not in _CHECK_KEYS:
+        raise SpecError(
+            f"{where}.kind must be one of {sorted(_CHECK_KEYS)}, got {kind!r}"
+        )
+    required, optional = _CHECK_KEYS[kind]
+    body = set(entry) - {"kind"}
+    missing = sorted(required - body)
+    if missing:
+        raise SpecError(f"{where}: {kind} check missing key(s) {missing}")
+    unknown = sorted(body - required - optional)
+    if unknown:
+        raise SpecError(f"{where}: {kind} check has unknown key(s) {unknown}")
+    # net-name fields stay strings; everything else is numeric.
+    string_fields = {"input", "output", "signal"}
+    params: dict[str, object] = {}
+    for k in (required | optional) & body:
+        if k in string_fields:
+            if not (isinstance(entry[k], str) and entry[k]):
+                raise SpecError(f"{where}.{k} must be a non-empty net-name string")
+            params[k] = entry[k]
+        elif k == "after_step":
+            if isinstance(entry[k], bool) or not isinstance(entry[k], int):
+                raise SpecError(f"{where}.after_step must be an integer")
+            params[k] = int(entry[k])
+        else:
+            params[k] = _as_number(entry[k], f"{where}.{k}")
+    return TbCheck(kind=kind, params=params)
+
+
+def _load_testbench(raw: Any, where: str) -> DesignTestbench | None:
+    if raw is None:
+        return None
+    mapping = _require_mapping(raw, where)
+    unknown = sorted(set(mapping) - {"rails", "dt", "n_steps", "stimuli", "checks"})
+    if unknown:
+        raise SpecError(f"{where}: unknown key(s) {unknown}")
+    for key in ("rails", "dt", "n_steps"):
+        if key not in mapping:
+            raise SpecError(f"{where}: required key {key!r} is missing")
+    rails_raw = _require_mapping(mapping["rails"], f"{where}.rails")
+    rails: dict[str, float] = {}
+    for name, volts in rails_raw.items():
+        if not (isinstance(name, str) and name):
+            raise SpecError(f"{where}.rails: keys must be non-empty rail-name strings")
+        rails[name] = _as_number(volts, f"{where}.rails[{name!r}]")
+    dt = _as_number(mapping["dt"], f"{where}.dt")
+    if dt <= 0.0:
+        raise SpecError(f"{where}.dt must be > 0")
+    n_steps_raw = mapping["n_steps"]
+    if isinstance(n_steps_raw, bool) or not isinstance(n_steps_raw, int) or n_steps_raw <= 0:
+        raise SpecError(f"{where}.n_steps must be a positive integer")
+    stimuli_raw = mapping.get("stimuli") or []
+    if not isinstance(stimuli_raw, list):
+        raise SpecError(f"{where}.stimuli must be a list")
+    stimuli = tuple(
+        _load_tb_stimulus(e, f"{where}.stimuli[{i}]") for i, e in enumerate(stimuli_raw)
+    )
+    checks_raw = mapping.get("checks") or []
+    if not isinstance(checks_raw, list):
+        raise SpecError(f"{where}.checks must be a list")
+    checks = tuple(
+        _load_tb_check(e, f"{where}.checks[{i}]") for i, e in enumerate(checks_raw)
+    )
+    return DesignTestbench(
+        rails=rails, dt=dt, n_steps=int(n_steps_raw), stimuli=stimuli, checks=checks
+    )
 
 
 def load_spec(path: str | Path) -> Spec:
@@ -319,6 +497,7 @@ def load_spec(path: str | Path) -> Spec:
     forbid_pack = _load_forbid_pack(raw.get("forbid_pack"), f"{spec_path}: forbid_pack")
     rail_aliases = _load_rail_aliases(raw.get("rail_aliases"), f"{spec_path}: rail_aliases")
     rail_binds = _load_rail_binds(raw.get("rail_binds"), f"{spec_path}: rail_binds")
+    testbench = _load_testbench(raw.get("testbench"), f"{spec_path}: testbench")
 
     return Spec(
         path=spec_path,
@@ -333,4 +512,5 @@ def load_spec(path: str | Path) -> Spec:
         forbid_pack=forbid_pack,
         rail_aliases=rail_aliases,
         rail_binds=rail_binds,
+        testbench=testbench,
     )

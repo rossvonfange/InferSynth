@@ -9,7 +9,7 @@ emitter uses to instantiate and wire the module, and resolves a deterministic
 operating point (param values + rail voltages + timing) that mirrors the v0
 Python tier's ``linear`` scenario so the two tiers cross-validate at one point.
 
-Precedence (docs/SIM.md §7): a cell with ``model/ams/`` is eligible for the
+Precedence (docs/SIM.md §8): a cell with ``model/ams/`` is eligible for the
 ``ams-simulation`` gate; ``model/behavior.py`` remains the v0 ``simulation`` gate.
 Neither replaces the other yet. Discovery here is pure and filesystem-only — no
 timestamps, no toolchain — so emission is a pure function of the cell.

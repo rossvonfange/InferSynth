@@ -12,7 +12,7 @@ LOUDLY when the toolchain is absent (the ``ams-simulation`` gate).
 
 The v0 pure-Python tier (:mod:`infersynth.sim`, docs/SIM.md) remains the
 ``simulation`` gate for cells without an AMS model; neither tier replaces the
-other yet (docs/SIM.md §7 precedence).
+other yet (docs/SIM.md §8 precedence).
 """
 
 from __future__ import annotations
