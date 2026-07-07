@@ -27,6 +27,16 @@ idioms:
     - connectivity
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "61300411121"
+      manufacturer: "Wurth Elektronik"
+      footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical"
+      maps: {J1: true}
+      sourcing: {digikey: 732-5317-ND}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Connector_Generic:Conn_01x04
   qualification: null

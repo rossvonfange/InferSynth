@@ -46,6 +46,26 @@ bindings:
   C1: {expr: "c_bulk_farads", format: capacitance}
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "MF-MSMF050-2"
+      manufacturer: "Bourns"
+      footprint: "Fuse:Fuse_1206_3216Metric"
+      maps: {F1: true}
+      sourcing: {digikey: MF-MSMF050-2CT-ND}
+    - mpn: "SS14"
+      manufacturer: "Vishay"
+      footprint: "Diode_SMD:D_SMA"
+      maps: {D1: true}
+      sourcing: {lcsc: C2480}
+    - mpn: "T491B106K016AT"
+      manufacturer: "Kemet"
+      footprint: "Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B"
+      maps: {C1: true}
+      sourcing: {digikey: 399-3697-1-ND}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Device:Polyfuse
   qualification: null

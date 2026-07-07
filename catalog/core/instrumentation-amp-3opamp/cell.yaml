@@ -65,6 +65,21 @@ bindings:
   R7: "r_diff_ohms"                # diff stage ground-ref R, ohms
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "OPA340NA/250"
+      manufacturer: "Texas Instruments"
+      footprint: "Package_TO_SOT_SMD:SOT-23-5"
+      maps: {U1: true, U2: true, U3: true}
+      sourcing: {digikey: OPA340NA/250-ND}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true, R2: true, R3: true, R4: true, R5: true, R6: true, R7: true}
+      sourcing: {lcsc: C25804}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Amplifier_Operational:OPA340NA
   qualification: null

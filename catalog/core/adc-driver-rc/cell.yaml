@@ -45,6 +45,21 @@ bindings:
   C1: {expr: "c_farads", format: capacitance}
 
 selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true}
+      sourcing: {lcsc: C25804}
+    - mpn: "CL10B104KB8NNNC"
+      manufacturer: "Samsung"
+      footprint: "Capacitor_SMD:C_0603_1608Metric"
+      maps: {C1: true}
+      sourcing: {lcsc: C14663}
   # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
   archetype_symbol: Device:R
   qualification: null
