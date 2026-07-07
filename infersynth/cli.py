@@ -622,6 +622,34 @@ def _cmd_lsp(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- recognize (Loom Pillar 2: reverse weaving) — localized, self-contained ---
+def _cmd_recognize(args: argparse.Namespace) -> int:
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.gates.netlist import NetlistError
+    from infersynth.recognize import load_design_netlist, recognize
+
+    try:
+        catalog = Catalog.load(args.catalog)
+    except CatalogError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        design = load_design_netlist(args.netlist)
+    except NetlistError as exc:
+        print(f"infersynth recognize: {exc}", file=sys.stderr)
+        return 2
+    result = recognize(design, catalog)
+    if args.out:
+        Path(args.out).write_text(result.to_json())
+    print(result.to_markdown())
+    print(
+        f"recognized {len(result.instances)} cell instance(s), "
+        f"{len(result.residual)} residual component(s)",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="infersynth",
@@ -659,6 +687,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", metavar="OUT", help="write a panel-compatible GateReport JSON to OUT"
     )
     p_gates.set_defaults(func=_cmd_gates)
+
+    # recognize (Loom Pillar 2: reverse weaving) — localized, self-contained.
+    p_recognize = sub.add_parser(
+        "recognize",
+        help="recognize catalog cells + recover params from a design netlist (reverse weave)",
+    )
+    p_recognize.add_argument(
+        "--netlist", required=True, metavar="F.xml", help="design netlist (KiCad kicadxml)"
+    )
+    p_recognize.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_recognize.add_argument(
+        "--out", metavar="OUT.json", help="write the RecognitionResult JSON to OUT"
+    )
+    p_recognize.set_defaults(func=_cmd_recognize)
 
     p_lint = sub.add_parser("lint", help="lint an FRD (markdown or .reqif)")
     p_lint.add_argument("frd", help="path to the FRD (.md or .reqif)")
