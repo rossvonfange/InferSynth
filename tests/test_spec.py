@@ -9,7 +9,7 @@ import yaml
 
 from infersynth.match.allocation import AllocationTable
 from infersynth.match.knobs import MatchKnobs
-from infersynth.spec import Spec, SpecError, load_spec
+from infersynth.spec import RailBind, Spec, SpecError, load_spec
 
 
 def _write(tmp_path: Path, data: dict) -> Path:
@@ -129,4 +129,97 @@ class TestLoadSpecInvalid:
     def test_unknown_knob_key(self, tmp_path):
         p = _write(tmp_path, {"knobs": {"bogus": 1}})
         with pytest.raises(SpecError, match="unknown key"):
+            load_spec(p)
+
+
+class TestRailBinds:
+    """``rail_binds`` — per-requirement port->rail bindings (NETFLOW)."""
+
+    def test_valid_binds_parsed_in_order(self, tmp_path):
+        p = _write(
+            tmp_path,
+            {
+                "rail_binds": [
+                    {"at": "PWR-01", "port": "VIN", "rail": "VIN_RAW"},
+                    {"at": "PRT-01", "port": "VOUT", "rail": "V_PROT"},
+                ]
+            },
+        )
+        spec = load_spec(p)
+        assert spec.rail_binds == (
+            RailBind(at="PWR-01", port="VIN", rail="VIN_RAW"),
+            RailBind(at="PRT-01", port="VOUT", rail="V_PROT"),
+        )
+        # the resolver-facing mapping keys on (requirement id, port)
+        assert spec.rail_binds_mapping() == {
+            ("PWR-01", "VIN"): "VIN_RAW",
+            ("PRT-01", "VOUT"): "V_PROT",
+        }
+
+    def test_absent_key_defaults_empty(self, tmp_path):
+        assert load_spec(_write(tmp_path, {})).rail_binds == ()
+
+    def test_same_port_on_two_requirements_ok(self, tmp_path):
+        # (at, port) is the identity — the same port NAME on two different
+        # requirements is exactly the series-chain use case.
+        p = _write(
+            tmp_path,
+            {
+                "rail_binds": [
+                    {"at": "PRT-01", "port": "VOUT", "rail": "V_PROT"},
+                    {"at": "REG-01", "port": "VOUT", "rail": "VOUT"},
+                ]
+            },
+        )
+        assert len(load_spec(p).rail_binds) == 2
+
+    def test_netflow_mapping_round_trips(self, tmp_path):
+        raw = [{"at": "PRT-01", "port": "VOUT", "rail": "V_PROT"}]
+        p = _write(tmp_path, {"rail_binds": raw})
+        assert load_spec(p).netflow_mapping()["rail_binds"] == raw
+
+    def test_duplicate_at_port_rejected(self, tmp_path):
+        p = _write(
+            tmp_path,
+            {
+                "rail_binds": [
+                    {"at": "PRT-01", "port": "VOUT", "rail": "V_PROT"},
+                    {"at": "PRT-01", "port": "VOUT", "rail": "OTHER"},
+                ]
+            },
+        )
+        with pytest.raises(SpecError, match="duplicate binding"):
+            load_spec(p)
+
+    def test_not_a_list_rejected(self, tmp_path):
+        p = _write(tmp_path, {"rail_binds": {"at": "X", "port": "P", "rail": "R"}})
+        with pytest.raises(SpecError, match="must be a list"):
+            load_spec(p)
+
+    def test_entry_not_a_mapping_rejected(self, tmp_path):
+        p = _write(tmp_path, {"rail_binds": ["PRT-01.VOUT=V_PROT"]})
+        with pytest.raises(SpecError, match="must be a mapping"):
+            load_spec(p)
+
+    def test_unknown_entry_key_rejected(self, tmp_path):
+        p = _write(
+            tmp_path,
+            {"rail_binds": [{"at": "X", "port": "P", "rail": "R", "bogus": 1}]},
+        )
+        with pytest.raises(SpecError, match="unknown key"):
+            load_spec(p)
+
+    @pytest.mark.parametrize("missing", ["at", "port", "rail"])
+    def test_missing_field_rejected(self, tmp_path, missing):
+        entry = {"at": "X", "port": "P", "rail": "R"}
+        del entry[missing]
+        p = _write(tmp_path, {"rail_binds": [entry]})
+        with pytest.raises(SpecError, match=missing):
+            load_spec(p)
+
+    @pytest.mark.parametrize("empty", ["at", "port", "rail"])
+    def test_empty_string_rejected(self, tmp_path, empty):
+        entry = {"at": "X", "port": "P", "rail": "R", empty: ""}
+        p = _write(tmp_path, {"rail_binds": [entry]})
+        with pytest.raises(SpecError, match="non-empty string"):
             load_spec(p)

@@ -17,10 +17,13 @@ Power rails wire by name, tier 1; the feeds chain wires the signal path.)
 ## Power and references
 
 - PWR-01 The system shall provide a power input connector.
+- PRT-01 The system shall provide reverse polarity protection.
 - REG-01 The system shall provide a linear regulator.
-  [D: reverse-polarity protection omitted in v1 — series power chains
-  (conn -> protection -> regulator) are inexpressible under name-based rail
-  grouping; per-instance rail binding is a round-2 work item]
+  (Series power chain PWR-01 -> PRT-01 -> REG-01: the connector's raw input
+  feeds the protection stage, whose protected output feeds the regulator. The
+  chain is expressed with per-requirement `rail_binds` in the spec — name-based
+  rail grouping alone would merge PRT-01's raw VOUT with REG-01's regulated
+  VOUT.)
 - REF-01 The system shall provide a voltage reference. [feeds: SNS-01:EXC_P]
 - MID-01 The system shall provide a rail splitter for a virtual ground. [feeds: AMP-01:REF] [feeds: FLT-01:REF] [feeds: OUT-01:REF]
 - DEC-01 The system shall provide a bypass capacitor.
