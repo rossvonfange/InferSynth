@@ -8,3 +8,36 @@ rail_aliases:
   VEE: GND      # single-supply design: negative rail is ground
   EXC_N: GND    # ratiometric bridge: excitation return tied to ground
   SHIELD: GND   # output-header shield tied to ground
+
+# --- design-level simulation (SEED_PLAN.md §1 acceptance criterion 3) ---------
+# Self-contained testbench section (a parallel WP edits the top half above;
+# this block stands alone). It composes the WHOLE synthesized behavioral chain
+# — bridge → in-amp(×100) → sallen-key LP → unity buffer → RC ADC driver — and
+# verifies the end-to-end gain, NOT just per-cell.
+#
+# Net names are the synthesized WiringPlan's names (see SYNTHESIS.md's "Wired
+# nets" table): rails by rail name; feed nets as f_SRC_DST[_ROLE].
+#
+# Stimulus: a single-ended ~1 mV sine on the bridge's positive sense leg
+# (f_SNS_01_CND_01_P) with the negative leg (f_SNS_01_CND_01_N) tied to 0 V, so
+# the in-amp's differential input equals the P-leg drive and the P-net→output
+# amplitude ratio reads the chain gain directly.
+#
+# Frequency 200 Hz = fc/5, deep in the sallen-key passband (|H|≈0.999), so the
+# end-to-end gain ≈ the in-amp gain 100 (bridge/RC/buffer are unity here).
+#
+# dt = 50 ns, n_steps = 120000 (=6 ms). MULTI-RATE NOTE: the ADC-driver RC has
+# tau≈50 ns while the signal period is 5 ms — the composed forward-Euler kernel
+# needs dt near the fastest pole for stability (dt≈tau makes that RC a near-
+# deadbeat unity follower); the naive dt=1 µs of a slow-only testbench would
+# make that RC diverge. 6 ms spans the filter settling (~2 ms) plus one full
+# 200 Hz cycle so peak-to-peak is phase-independent.
+testbench:
+  rails: {VOUT: 5.0, GND: 0.0, VIN: 12.0}
+  dt: 5.0e-8
+  n_steps: 120000
+  stimuli:
+    - {signal: f_SNS_01_CND_01_P, kind: sine, amplitude: 1.0e-3, freq_hz: 200.0, offset: 0.0}
+    - {signal: f_SNS_01_CND_01_N, kind: dc, value: 0.0}
+  checks:
+    - {kind: amplitude_ratio, input: f_SNS_01_CND_01_P, output: f_DRV_01_OUT_01, expected: 100.0, tol_pct: 8.0}

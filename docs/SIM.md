@@ -136,7 +136,101 @@ end-state tier remains unwired).
 * **x4 channel gains are 1, 2, 3, 4** ("gains 1..4"), driven from one shared
   input signal so each channel's gain is independently measured.
 
-## 7. The AMS tier — emitted SystemC-AMS (`infersynth/emit_sysc_ams/`, WP-S2)
+## 7. The design tier — whole-design behavioral simulation (`infersynth/sim/design.py`)
+
+SEED_PLAN §1 acceptance criterion 3: simulate the WHOLE synthesized design's
+behavioral chain end-to-end, not just per-cell. Sits on the same v0 kernel —
+a design sim is just MORE blocks wired by the WiringPlan's nets.
+
+### Composition rules (`build_design_sim(result, catalog, rails, dt, n_steps)`)
+
+* **Nets are electrical nodes.** WiringPlan nets sharing an ``(instname, port)``
+  endpoint (e.g. the three ``f_MID_*`` nets all touching the rail splitter's
+  ``VGND``) are unioned into ONE simulation signal, named by the
+  lexicographically smallest net name in the component (rails keep their own
+  names — rail names sort UPPERCASE-first, below the ``c_``/``f_``/``n_``
+  signal-net prefixes).
+* **One Block per behavioral instance:** ``make_behavior(resolved_params)`` with
+  the instance's synthesize-resolved params; block ``name`` = instname; each
+  port bound to its net's composed signal.
+* **RAIL nets become DC sources** at the voltages of the required ``rails``
+  mapping — a rail net with no declared voltage is an ERROR naming it, and a
+  declared rail that is not a plan rail net is also an error. A behavior output
+  landing on a rail net (the regulator's ``VOUT``) is redirected to a private
+  sink signal: the declared rail is the single driver (one driver per signal).
+* **Structural cells are PASSTHROUGH:** an instance with no ``model/behavior.py``
+  whose technology is electromechanical/passive (or whose every port is
+  ``direction: passive``) contributes no block — a connector doesn't transform;
+  its ports are simply shared signals. (Each port lives in exactly one net
+  under the plan model, so a structural cell cannot bridge two different nets —
+  fine.) Recorded loudly as an informational note. A NON-structural instance
+  missing a behavior instead triggers a loud gate SKIP naming it — a partial
+  sim never reads as a full one.
+* **Unwired ports float:** a port in no net binds to a private 0.0-holding
+  signal and is listed loudly (``floating_ports``).
+
+Determinism (SELECTION.md §8): the build is a pure function of
+(result, catalog, rails, dt, n_steps); two runs give byte-identical traces.
+
+### Spec `testbench:` key (v0, strict — `infersynth/spec.py`)
+
+```yaml
+testbench:
+  rails: {VOUT: 5.0, GND: 0.0, VIN: 12.0}   # required; every rail net, by name
+  dt: 5.0e-8                                 # required, > 0
+  n_steps: 120000                            # required, positive int
+  stimuli:                                   # kinds: sine | dc
+    - {signal: <net>, kind: sine, amplitude: 0.001, freq_hz: 200.0, offset: 0.0}
+    - {signal: <net>, kind: dc, value: 0.0}
+  checks:                     # kinds: amplitude_ratio | settles_to | clipped_within
+    - {kind: amplitude_ratio, input: <net>, output: <net>, expected: 100.0, tol_pct: 8.0}
+    - {kind: settles_to, signal: <net>, value: 2.5, tol: 0.05}   # optional after_step
+    - {kind: clipped_within, signal: <net>, lo: 0.0, hi: 5.0}    # optional eps
+```
+
+Unknown kinds/keys and missing required keys are ``SpecError``s. **Net names
+are the WiringPlan's net names**: rails by rail name, feed nets
+``f_SRC_DST[_ROLE]``, intra-chain ``n_<reqid>_<k>``, converged ``c_<k>`` — the
+SYNTHESIS.md "Wired nets" table is how an author discovers them. Any net name
+in a collapsed component resolves to the shared signal.
+
+### The gate — `design-simulation` (`infersynth/gates/design_simulation.py`)
+
+Runs inside ``synthesize(..., verify=True, testbench=...)``; the CLI passes the
+spec's ``testbench:`` through ``infersynth synthesize --spec``, prints the gate
+result, and renders it as a SYNTHESIS.md section. Loud outcomes:
+
+1. no ``testbench:`` in the spec → **SKIPPED** loudly;
+2. wiring plan absent or not ``clean`` → **SKIPPED** (a whole-design sim needs
+   the fully-wired plan);
+3. non-structural instance(s) with no ``model/behavior.py`` → **SKIPPED**
+   naming them (structural passthroughs exempt, noted informationally);
+4. otherwise compose → run deterministically → each check is a
+   ``[PASS]/[FAIL]`` diagnostic; any failing check or crashing sim fails the
+   gate.
+
+``infersynth gates --design`` was left untouched (documented choice): that
+path takes a bare schematic root and has no synthesis result/catalog to
+compose from — the design sim's natural home is the synthesize verify path,
+where the wiring plan and resolved params already exist.
+
+### The BridgeSense-1 end-to-end check
+
+``examples/frds/07_bridgesense_1.spec.yaml`` ships the reference testbench: a
+1 mV 200 Hz sine on the bridge's positive sense net (``f_SNS_01_CND_01_P``),
+negative leg DC 0 V, rails ``VOUT 5 / GND 0 / VIN 12``, asserting the
+P-net → ``f_DRV_01_OUT_01`` amplitude ratio ≈ 100 ±8 % — the in-amp's ×100
+with bridge RC / sallen-key (200 Hz = fc/5, |H|≈0.999) / buffer / RC driver all
+≈ unity. Measured: **99.90**.
+
+**Multi-rate caveat (the chose-dt convention):** the composed chain shares ONE
+``dt``; forward-Euler needs ``dt`` at or below the FASTEST pole's time constant
+(here the ADC driver RC, tau ≈ 50 ns), while the run must span the SLOWEST
+dynamics (filter settling + one full stimulus cycle). BridgeSense uses
+``dt = 50 ns``, ``n_steps = 120000`` (6 ms). A ``dt`` above a fast pole's tau
+makes that stage's Euler integrator diverge — visible as an ``inf`` gain.
+
+## 8. The AMS tier — emitted SystemC-AMS (`infersynth/emit_sysc_ams/`, WP-S2)
 
 The end-state simulation tier of DESIGN.md §4, sitting *above* the v0 tier
 documented in §§1–6: the compiler **emits** standalone SystemC-AMS C++ (TDF
