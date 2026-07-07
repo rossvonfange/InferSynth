@@ -7,7 +7,9 @@ CXX ?= g++
 CXXSTD ?= -std=c++17
 CXXFLAGS ?= $(CXXSTD) -I. -I$(SYSTEMC_HOME)/include -I$(SYSTEMC_AMS_HOME)/include
 LDFLAGS ?= -L$(SYSTEMC_HOME)/lib -L$(SYSTEMC_HOME)/lib-linux64 \
-	-L$(SYSTEMC_AMS_HOME)/lib -L$(SYSTEMC_AMS_HOME)/lib-linux64
+	-L$(SYSTEMC_AMS_HOME)/lib -L$(SYSTEMC_AMS_HOME)/lib-linux64 \
+	-Wl,-rpath,$(SYSTEMC_HOME)/lib -Wl,-rpath,$(SYSTEMC_HOME)/lib-linux64 \
+	-Wl,-rpath,$(SYSTEMC_AMS_HOME)/lib -Wl,-rpath,$(SYSTEMC_AMS_HOME)/lib-linux64
 LDLIBS ?= -lsystemc-ams -lsystemc -lm
 
 TARGET = sim
