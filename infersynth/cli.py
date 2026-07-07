@@ -255,6 +255,68 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_pipeline(args: argparse.Namespace) -> int:
+    import json
+
+    from infersynth.catalog import CatalogError
+    from infersynth.decide.lockfile import load as load_lockfile
+    from infersynth.lint.reqif_io import ReqIFImportError
+    from infersynth.pipeline import run_pipeline
+    from infersynth.spec import SpecError, load_spec
+
+    try:
+        spec = load_spec(args.spec) if args.spec else None
+        frd = args.frd or (str(spec.frd) if spec is not None and spec.frd else None)
+        if not frd:
+            print(
+                "infersynth pipeline: one of --frd or --spec (with a frd: key) is required",
+                file=sys.stderr,
+            )
+            return 2
+        profile = args.profile if args.profile else None
+        lockfile = load_lockfile(args.lockfile) if args.lockfile else None
+        result = run_pipeline(
+            frd,
+            args.catalog,
+            args.out,
+            spec=spec,
+            profile=profile,
+            max_rounds=args.max_rounds,
+            name=args.name,
+            lockfile=lockfile,
+        )
+    except json.JSONDecodeError as exc:
+        print(f"infersynth pipeline: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, ReqIFImportError, CatalogError, ValueError, SpecError) as exc:
+        print(f"infersynth pipeline: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"root: {result.synthesis.root if result.synthesis else '(none)'}")
+    print(
+        f"rounds: {len(result.rounds)}  "
+        f"converged: {result.converged}  all-decided: {result.all_decided}"
+    )
+    for rnd in result.rounds:
+        print(f"  round {rnd.index}: {len(rnd.winners)} decided, {len(rnd.undecided)} undecided")
+        for ge in rnd.gate_exclusions:
+            print(f"    - gate-fail excludes {ge.cell_key} (for {ge.requirement_id}): {ge.reason}")
+        for h in rnd.hints_applied:
+            print(f"    - hint {h.requirement_id}: +allow {list(h.added_libraries)} ({h.rule})")
+    if result.pending_resolutions:
+        print(f"pending resolutions: {len(result.pending_resolutions)}")
+        for pr in result.pending_resolutions:
+            print(f"  ? [{pr.kind}] {pr.subject}: {pr.spec_edit}")
+    if result.resolutions_path is not None:
+        print(f"resolutions: {result.resolutions_path}")
+    if result.synthesis is not None:
+        print(f"report: {result.synthesis.report_path}")
+
+    if result.pending_resolutions or not (result.converged and result.all_decided):
+        return 3
+    return 0
+
+
 def _cmd_decide(args: argparse.Namespace) -> int:
     import json
 
@@ -531,6 +593,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip NETFLOW wiring (rails + intra-chain nets) and its ERC report",
     )
     p_syn.set_defaults(func=_cmd_synthesize)
+
+    p_pipe = sub.add_parser(
+        "pipeline",
+        help="fixed-point driver (WP-F1): loop match->decide with gate-failure "
+        "feedback + assisted second pass; emit the converged design + resolutions_needed.json",
+    )
+    p_pipe.add_argument(
+        "--frd", metavar="F.md", help="path to the FRD (default: --spec's frd:; overrides it)"
+    )
+    p_pipe.add_argument(
+        "--spec",
+        metavar="spec.yaml",
+        help="formal spec: allocations/profile/endpoints/knobs/pins/feeds, and a default --frd",
+    )
+    p_pipe.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_pipe.add_argument("--out", required=True, metavar="DIR", help="design output directory")
+    p_pipe.add_argument("--name", metavar="N", help="design name (default: FRD stem)")
+    p_pipe.add_argument(
+        "--profile", metavar="P", help="named weight profile (prototype|production|hobbyist)"
+    )
+    p_pipe.add_argument("--lockfile", metavar="F", help="costs.lock.json to override cell costs")
+    p_pipe.add_argument(
+        "--max-rounds", type=int, default=3, metavar="N", help="iteration budget (default: 3)"
+    )
+    p_pipe.set_defaults(func=_cmd_pipeline)
 
     p_costs = sub.add_parser("costs", help="cost lockfile operations")
     costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)
