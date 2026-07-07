@@ -650,6 +650,39 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- verify-recovered (Loom Pillar 2 honesty gate) — localized, self-contained ---
+def _cmd_verify_recovered(args: argparse.Namespace) -> int:
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.gates.netlist import NetlistError
+    from infersynth.gates.recovered_fabric import verify_recovered_fabric
+    from infersynth.recognize import load_design_netlist, recognize
+
+    try:
+        catalog = Catalog.load(args.catalog)
+    except CatalogError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        design = load_design_netlist(args.netlist)
+    except NetlistError as exc:
+        print(f"infersynth verify-recovered: {exc}", file=sys.stderr)
+        return 2
+    recognition = recognize(design, catalog)
+    report = verify_recovered_fabric(recognition, design, catalog, tol=args.tol)
+    if args.out:
+        import json
+
+        Path(args.out).write_text(json.dumps(report.to_dict(), indent=2))
+    print(report.to_markdown())
+    print(
+        f"VERDICT: {'PASS' if report.verified else 'FAIL'} — "
+        f"{len(report.verified_sites)}/{len(report.sites)} site(s) verified, "
+        f"{report.glue_count} glue component(s) declared-not-verified",
+        file=sys.stderr,
+    )
+    return 0 if report.verified else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="infersynth",
@@ -701,6 +734,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", metavar="OUT.json", help="write the RecognitionResult JSON to OUT"
     )
     p_recognize.set_defaults(func=_cmd_recognize)
+
+    # verify-recovered (Loom Pillar 2 honesty gate) — localized, self-contained.
+    p_verify_rec = sub.add_parser(
+        "verify-recovered",
+        help="verify a recovered fabric: recognized sites vs golden partitions, "
+        "glue declared-not-verified (reverse-weave CI)",
+    )
+    p_verify_rec.add_argument(
+        "--netlist", required=True, metavar="F.xml", help="source design netlist (KiCad kicadxml)"
+    )
+    p_verify_rec.add_argument(
+        "--catalog", required=True, metavar="DIR", help="catalog directory"
+    )
+    p_verify_rec.add_argument(
+        "--tol", type=float, default=1e-6, metavar="T",
+        help="max relative parametric residual tolerated (default: 1e-6)",
+    )
+    p_verify_rec.add_argument(
+        "--out", metavar="OUT.json", help="write the RecoveredFabricReport JSON to OUT"
+    )
+    p_verify_rec.set_defaults(func=_cmd_verify_recovered)
 
     p_lint = sub.add_parser("lint", help="lint an FRD (markdown or .reqif)")
     p_lint.add_argument("frd", help="path to the FRD (.md or .reqif)")
