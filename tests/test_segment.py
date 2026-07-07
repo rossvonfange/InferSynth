@@ -205,6 +205,86 @@ def test_hierarchical_recognizes_and_promotes(catalog: Catalog) -> None:
     assert set(cand.component_refs) & {"U2", "U3", "R5"}
 
 
+# --------------------------------------------------------------------------- #
+# Rail-attached-passive absorption: decoupling caps fold into their IC's       #
+# segment instead of falling out as residual singletons.                      #
+# --------------------------------------------------------------------------- #
+def _decoupled_ic_design() -> DesignNetlist:
+    """One IC cluster (U1, R1, R2, C1) plus three decoupling caps C2/C3/C4 (one
+    rail pin + one pin shared onto the cluster's already-claimed ``U1_D`` net,
+    so their edge weight to R1/R2 is 1/4 < MERGE_THRESHOLD and they fall out of
+    clustering as singletons) and one bulk cap C5 strung purely between VCC and
+    GND (no signal net at all). Refdes prefixes are real classes (``C``) —
+    ``ref_class`` matches the whole leading alpha run, so multi-letter
+    "CDEC"-style refs would misclassify."""
+    comps = {r: ("", "") for r in ["U1", "R1", "R2", "C1", "C2", "C3", "C4", "C5"]}
+    nets = {
+        "U1_A": [("U1", "1"), ("R1", "1")],
+        "U1_B": [("U1", "2"), ("R2", "1")],
+        "U1_C": [("U1", "3"), ("C1", "1")],
+        # already degree-2 (weight 1.0 for R1-R2); 3 caps push it to degree 5
+        # (weight 0.25) so none of the cap-R/cap-cap pairs reach MERGE_THRESHOLD.
+        "U1_D": [("R1", "2"), ("R2", "2"), ("C2", "2"), ("C3", "2"), ("C4", "2")],
+        "VCC": [("C2", "1"), ("C3", "1"), ("C4", "1"), ("C5", "1")],
+        "GND": [("C1", "2"), ("U1", "6"), ("C5", "2")],
+    }
+    return _design(comps, nets)
+
+
+def test_decoupling_caps_absorbed_into_ic_segment(catalog: Catalog) -> None:
+    d = _decoupled_ic_design()
+    pre = segment(d, catalog, absorb_passives=False)
+    # pre-absorption: the caps are residual singletons, as the bug report says.
+    assert set(pre.residual) >= {"C2", "C3", "C4", "C5"}
+    assert len(pre.segments) == 1
+    assert pre.segments[0].component_refs == ("C1", "R1", "R2", "U1")
+
+    res = segment(d, catalog, absorb_passives=True)
+    assert len(res.segments) == 1
+    seg = res.segments[0]
+    # all 3 decoupling caps folded into the IC's segment ...
+    assert seg.component_refs == ("C1", "C2", "C3", "C4", "R1", "R2", "U1")
+    assert seg.provenance["absorbed"] == ["C2", "C3", "C4"]
+    # ... and the bulk cap (both pins on rails) is left residual, tagged.
+    assert "C5" in res.residual
+    assert res.residual_tags["C5"] == "rail-only"
+    assert res.rail_only_residual == ("C5",)
+    assert res.absorbed_count == 3
+    assert "C2" not in res.residual
+    assert "C3" not in res.residual
+    assert "C4" not in res.residual
+
+
+def test_absorption_does_not_move_anchor_or_merge_segments(catalog: Catalog) -> None:
+    """Absorption only grows component_refs — same segment count, same id,
+    same anchor set (empty here), nothing merged or moved."""
+    d = _decoupled_ic_design()
+    pre = segment(d, catalog, absorb_passives=False)
+    post = segment(d, catalog, absorb_passives=True)
+    assert len(pre.segments) == len(post.segments) == 1
+    assert pre.segments[0].id == post.segments[0].id
+    assert pre.segments[0].provenance["anchors"] == post.segments[0].provenance["anchors"]
+    assert pre.segments[0].internal_nets == post.segments[0].internal_nets
+    assert pre.segments[0].boundary == post.segments[0].boundary
+    # only component_refs grew
+    assert set(pre.segments[0].component_refs) < set(post.segments[0].component_refs)
+
+
+def test_absorb_passives_false_restores_old_behavior(catalog: Catalog) -> None:
+    d = _decoupled_ic_design()
+    res = segment(d, catalog, absorb_passives=False)
+    assert {"C2", "C3", "C4", "C5"} <= set(res.residual)
+    assert res.residual_tags == {}
+    assert res.absorbed_count == 0
+
+
+def test_absorption_is_deterministic(catalog: Catalog) -> None:
+    d = _decoupled_ic_design()
+    a = segment(d, catalog, absorb_passives=True)
+    b = segment(d, catalog, absorb_passives=True)
+    assert a.to_json() == b.to_json()
+
+
 def test_restrict_netlist_scopes_to_segment() -> None:
     d = _two_cluster_design()
     sub = restrict_netlist(d, ("U1", "R1", "R2", "C1"))
@@ -337,7 +417,7 @@ def test_polarfire_board_segments_sanely(tmp_path: Path, catalog: Catalog) -> No
     assert len(design.components) > 400
     assert len(design.nets) > 300
 
-    res = segment(design, catalog)
+    res = segment(design, catalog)  # absorb_passives=True by default
     n_comp = len(design.components)
     sizes = sorted((len(s.component_refs) for s in res.segments), reverse=True)
     largest = sizes[0] if sizes else 0
@@ -355,3 +435,55 @@ def test_polarfire_board_segments_sanely(tmp_path: Path, catalog: Catalog) -> No
     assert len(hres.per_segment) == len(res.segments)
     # a large residual is expected (decoupling caps on rails, FPGA/DDR glue).
     assert len(hres.residual) > 0
+
+    # ------------------------------------------------------------------- #
+    # Rail-attached-passive absorption payoff: before/after on the real   #
+    # board. Pre-absorption baseline is ~345/562 residual singletons      #
+    # (overwhelmingly decoupling caps); absorption should fold most of    #
+    # those into their IC's segment without exploding segment count or    #
+    # moving any anchor.                                                  #
+    # ------------------------------------------------------------------- #
+    pre = segment(design, catalog, absorb_passives=False)
+    n_pre_residual = len(pre.residual)
+    n_pre_segments = len(pre.segments)
+    pre_anchors = {s.id: s.provenance["anchors"] for s in pre.segments}
+    pre_largest = max((len(s.component_refs) for s in pre.segments), default=0)
+
+    n_post_residual = len(res.residual)
+    n_post_segments = len(res.segments)
+    post_anchors = {s.id: s.provenance["anchors"] for s in res.segments}
+    post_largest = max((len(s.component_refs) for s in res.segments), default=0)
+
+    print(
+        f"\n[polarfire absorption] residual {n_pre_residual} -> {n_post_residual} "
+        f"(absorbed={res.absorbed_count}, rail_only={len(res.rail_only_residual)}); "
+        f"segments {n_pre_segments} -> {n_post_segments}; "
+        f"largest {pre_largest} -> {post_largest}"
+    )
+
+    # confirms the ~345 baseline this task set out to fix, and that absorption
+    # actually moves the needle. On this board most decoupling is a direct
+    # rail-to-rail bypass cap (VDD net to GND, no unique local/signal net at
+    # all) — topologically indistinguishable from any other cap on that same
+    # rail pair, so it has no honest single owner and correctly stays
+    # "rail-only" residual rather than being force-assigned. The absorbable
+    # subset (one rail pin + one genuinely local pin) is smaller but real:
+    # observed on this board, 345 -> 258 residual (87 absorbed, 236 of the
+    # remaining 258 rail-only-tagged, the rest genuine unexplained glue).
+    assert n_pre_residual > 300, n_pre_residual
+    assert res.absorbed_count >= 50, res.absorbed_count
+    assert n_post_residual < n_pre_residual - 50, (n_pre_residual, n_post_residual)
+    assert n_post_residual < 300, (n_pre_residual, n_post_residual, res.absorbed_count)
+    # every non-absorbed residual ref is now honestly accounted for: either
+    # rail-only tagged, or genuine (not a rail-attached-passive at all).
+    assert res.absorbed_count == n_pre_residual - n_post_residual
+
+    # absorption is pure enrichment: same segment ids/anchors, no fragmentation.
+    assert n_post_segments == n_pre_segments
+    assert post_anchors == pre_anchors
+    # the largest segment only grows by absorbed refs, never a new merge.
+    assert post_largest >= pre_largest
+    assert post_largest < n_comp * 0.4, (post_largest, n_comp)
+
+    # determinism holds for the absorption pass on the real board too.
+    assert segment(design, catalog, absorb_passives=True).to_json() == res.to_json()

@@ -57,6 +57,21 @@ two runs are byte-identical, SELECTION.md §8):
    boundary pin carries the ``interface_kind`` of its bundle. The segment's
    ``interface_kind`` is the dominant kind over its interface boundary pins.
 
+6. **Absorb rail-attached passives (post-clustering).** After agglomeration, a
+   residual singleton that is a 2-pin passive (:data:`PASSIVE_CLASSES` — C, R,
+   L, FB, by refdes prefix) with exactly one pin on a rail net and one pin on a
+   non-rail net is folded into the segment that owns the non-rail net's other
+   pins (its decoupling target), by pin-count-on-that-net then lowest segment
+   id. This is pure enrichment: it only appends to a segment's
+   ``component_refs`` and records an ``absorbed`` note in its ``provenance`` —
+   it never creates or merges segments and never moves an anchor. A passive
+   whose both pins sit on rails (a bulk cap strung between two power rails, no
+   signal net) has no owner; it stays residual but is tagged ``rail-only`` in
+   :attr:`SegmentationResult.residual_tags` so it reads as *explained*
+   residual, not silently-dropped glue (the determinism/honesty invariants in
+   docs/HIERARCHICAL_RECOGNITION.md still apply: two runs byte-identical,
+   nothing hidden). Toggle with ``segment(..., absorb_passives=False)``.
+
 ``labels`` (Contract 1 :class:`LabelClaim`) are HINTS ONLY — connectivity is
 truth. A ``block`` label adds a bonus to the *existing* local-net edges among
 its refs (biasing a borderline passive toward the labeled cluster) but never
@@ -74,7 +89,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from infersynth.catalog import Catalog
-from infersynth.recognize.netlist import DesignNetlist
+from infersynth.recognize.netlist import DesignNetlist, ref_class
 
 __all__ = [
     "SCHEMA",
@@ -82,6 +97,7 @@ __all__ = [
     "ANCHOR_DEGREE",
     "MERGE_THRESHOLD",
     "BUS_MIN_WIDTH",
+    "PASSIVE_CLASSES",
     "LabelClaim",
     "BoundaryPin",
     "Segment",
@@ -115,6 +131,12 @@ MERGE_THRESHOLD = 0.5
 #: Minimum member count for an indexed group of nets to be treated as one bus
 #: interface bundle (e.g. a >=4-bit address/data bus).
 BUS_MIN_WIDTH = 4
+
+#: Refdes-prefix classes eligible for the post-clustering rail-attached-passive
+#: absorption pass: simple 2-pin passives (capacitor, resistor, inductor,
+#: ferrite bead). Footprint/size agnostic — refdes-prefix based, same
+#: convention :func:`infersynth.recognize.netlist.ref_class` already uses.
+PASSIVE_CLASSES = frozenset({"C", "R", "L", "FB"})
 
 #: Extra edge weight added between two components that share a ``block`` label
 #: and already share a local net — a hint that biases a borderline assignment
@@ -212,10 +234,26 @@ class Segment:
 
 @dataclass(frozen=True)
 class SegmentationResult:
-    """Contract 2 — the segmenter's output."""
+    """Contract 2 — the segmenter's output.
+
+    ``residual_tags`` maps a residual ref to an explanatory tag (currently only
+    ``"rail-only"``, for a 2-pin passive strung between two power rails with no
+    signal net — no clear absorption owner). A residual ref absent from
+    ``residual_tags`` is genuine, unexplained glue: never hidden, never
+    reclassified away. ``absorbed_count`` is how many rail-attached passives
+    the post-clustering absorption pass (see module docstring) folded into an
+    existing segment's ``component_refs``.
+    """
 
     segments: tuple[Segment, ...] = ()
     residual: tuple[str, ...] = ()
+    residual_tags: dict[str, str] = field(default_factory=dict)
+    absorbed_count: int = 0
+
+    @property
+    def rail_only_residual(self) -> tuple[str, ...]:
+        """Residual refs tagged ``rail-only`` — explained, not hidden."""
+        return tuple(sorted(r for r, tag in self.residual_tags.items() if tag == "rail-only"))
 
     def to_dict(self) -> dict[str, Any]:
         sizes = sorted((len(s.component_refs) for s in self.segments), reverse=True)
@@ -226,9 +264,12 @@ class SegmentationResult:
                 "residual_components": len(self.residual),
                 "largest_segment": sizes[0] if sizes else 0,
                 "segment_sizes": sizes,
+                "absorbed_passives": self.absorbed_count,
+                "rail_only_residual": len(self.rail_only_residual),
             },
             "segments": [s.to_dict() for s in self.segments],
             "residual": list(self.residual),
+            "residual_tags": dict(sorted(self.residual_tags.items())),
         }
 
     def to_json(self, *, indent: int = 2) -> str:
@@ -236,6 +277,7 @@ class SegmentationResult:
 
     def to_markdown(self) -> str:
         sizes = sorted((len(s.component_refs) for s in self.segments), reverse=True)
+        rail_only = self.rail_only_residual
         lines = [
             "# Segmentation report",
             "",
@@ -243,6 +285,9 @@ class SegmentationResult:
             f"- segments: **{len(self.segments)}** "
             f"(largest {sizes[0] if sizes else 0} components)",
             f"- residual (unclustered) components: **{len(self.residual)}**",
+            f"- rail-attached passives absorbed into segments: **{self.absorbed_count}**",
+            f"- rail-only residual passives (tagged, no clear owner): "
+            f"**{len(rail_only)}** {list(rail_only)[:8]}{' ...' if len(rail_only) > 8 else ''}",
             "",
             "## Segments",
             "",
@@ -422,13 +467,114 @@ class _Union:
         return True
 
 
+def _component_pins(design: DesignNetlist) -> dict[str, list[tuple[str, str]]]:
+    """ref -> sorted ``(pin, net)`` list, built deterministically from
+    ``design.nets`` (net name order, then pin order) — mirrors the traversal
+    :func:`_build_segment` already uses."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for name, pins in sorted(design.nets.items()):
+        for ref, pin in sorted(pins):
+            out.setdefault(ref, []).append((pin, name))
+    return out
+
+
+def _absorb_rail_passives(
+    segments: list[Segment],
+    residual: tuple[str, ...],
+    design: DesignNetlist,
+    netcls: dict[str, NetClass],
+) -> tuple[list[Segment], tuple[str, ...], dict[str, str], int]:
+    """Post-clustering absorption pass (module docstring, step 6).
+
+    A residual 2-pin passive (:data:`PASSIVE_CLASSES`) with one pin on a rail
+    net and one pin on a non-rail net is folded into the segment that owns the
+    most pins on that non-rail net (ties broken by lowest segment id/index —
+    segment ids are assigned in that same order). A passive with both pins on
+    rails is left residual but tagged ``"rail-only"``. Everything else (a
+    non-passive, a >2-pin part, or a passive with zero or two non-rail pins) is
+    left as ordinary, unexplained residual. Pure + deterministic: only reads
+    ``residual``'s membership at entry, never re-derives ownership from
+    already-absorbed refs.
+    """
+    comp_pins = _component_pins(design)
+    seg_of: dict[str, int] = {
+        r: idx for idx, seg in enumerate(segments) for r in seg.component_refs
+    }
+
+    absorbed_by_seg: dict[int, list[str]] = {}
+    tags: dict[str, str] = {}
+    still_residual: list[str] = []
+
+    for ref in residual:  # residual is already sorted
+        pins = comp_pins.get(ref, [])
+        if ref_class(ref) not in PASSIVE_CLASSES or len(pins) != 2:
+            still_residual.append(ref)
+            continue
+        nets = [n for _pin, n in pins]
+        is_rail = [netcls[n].kind == "rail" for n in nets]
+        if all(is_rail):
+            tags[ref] = "rail-only"
+            still_residual.append(ref)
+            continue
+        if not any(is_rail):
+            still_residual.append(ref)  # no rail pin at all: not this pass's target
+            continue
+        local_net = nets[1] if is_rail[0] else nets[0]
+        pin_counts: dict[int, int] = {}
+        for other_ref, _pin in design.nets.get(local_net, ()):
+            if other_ref == ref:
+                continue
+            sidx = seg_of.get(other_ref)
+            if sidx is not None:
+                pin_counts[sidx] = pin_counts.get(sidx, 0) + 1
+        if not pin_counts:
+            still_residual.append(ref)  # no owner on the non-rail net: no clear target
+            continue
+        owner = min(pin_counts, key=lambda i: (-pin_counts[i], i))
+        absorbed_by_seg.setdefault(owner, []).append(ref)
+
+    if not absorbed_by_seg:
+        return segments, tuple(sorted(still_residual)), tags, 0
+
+    new_segments: list[Segment] = []
+    absorbed_count = 0
+    for idx, seg in enumerate(segments):
+        extra = absorbed_by_seg.get(idx)
+        if not extra:
+            new_segments.append(seg)
+            continue
+        extra_sorted = sorted(extra)
+        absorbed_count += len(extra_sorted)
+        new_prov = dict(seg.provenance)
+        new_prov["absorbed"] = extra_sorted
+        new_segments.append(
+            Segment(
+                id=seg.id,
+                component_refs=tuple(sorted((*seg.component_refs, *extra_sorted))),
+                internal_nets=seg.internal_nets,
+                boundary=seg.boundary,
+                interface_kind=seg.interface_kind,
+                label=seg.label,
+                provenance=new_prov,
+            )
+        )
+    return new_segments, tuple(sorted(still_residual)), tags, absorbed_count
+
+
 def segment(
-    design: DesignNetlist, catalog: Catalog, *, labels: list[LabelClaim] | None = None
+    design: DesignNetlist,
+    catalog: Catalog,
+    *,
+    labels: list[LabelClaim] | None = None,
+    absorb_passives: bool = True,
 ) -> SegmentationResult:
     """Partition *design* into interface-bounded segments. Pure + deterministic.
 
     See the module docstring for the algorithm. ``labels`` are hints only; with
     ``labels=None`` the result is pure connectivity (the v0 baseline).
+    ``absorb_passives`` (default ``True``) runs the post-clustering
+    rail-attached-passive absorption pass (module docstring, step 6); pass
+    ``False`` to get the pre-absorption behavior back.
     """
     netcls = classify_nets(design, catalog, labels)
     refs = sorted(design.components)
@@ -494,7 +640,20 @@ def segment(
             _build_segment(f"seg-{idx:03d}", members, design, netcls, anchors, block_label_of)
         )
     residual = tuple(sorted(r for r in refs if r not in clustered))
-    return SegmentationResult(segments=tuple(segments), residual=residual)
+
+    residual_tags: dict[str, str] = {}
+    absorbed_count = 0
+    if absorb_passives:
+        segments, residual, residual_tags, absorbed_count = _absorb_rail_passives(
+            segments, residual, design, netcls
+        )
+
+    return SegmentationResult(
+        segments=tuple(segments),
+        residual=residual,
+        residual_tags=residual_tags,
+        absorbed_count=absorbed_count,
+    )
 
 
 def _block_label_index(labels: list[LabelClaim] | None) -> dict[frozenset[str], str]:
