@@ -626,7 +626,7 @@ def _cmd_lsp(args: argparse.Namespace) -> int:
 def _cmd_recognize(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
     from infersynth.gates.netlist import NetlistError
-    from infersynth.recognize import load_design_netlist, recognize
+    from infersynth.recognize import hierarchical_recognize, load_design_netlist, recognize
 
     try:
         catalog = Catalog.load(args.catalog)
@@ -638,12 +638,53 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
     except NetlistError as exc:
         print(f"infersynth recognize: {exc}", file=sys.stderr)
         return 2
+    if getattr(args, "hierarchical", False):
+        hres = hierarchical_recognize(design, catalog)
+        if args.out:
+            Path(args.out).write_text(hres.to_json())
+        print(hres.to_markdown())
+        print(
+            f"{len(hres.recognized_segments)} recognized segment(s), "
+            f"{len(hres.promoted_candidates)} promoted candidate(s), "
+            f"{len(hres.residual)} residual component(s)",
+            file=sys.stderr,
+        )
+        return 0
     result = recognize(design, catalog)
     if args.out:
         Path(args.out).write_text(result.to_json())
     print(result.to_markdown())
     print(
         f"recognized {len(result.instances)} cell instance(s), "
+        f"{len(result.residual)} residual component(s)",
+        file=sys.stderr,
+    )
+    return 0
+
+
+# --- segment (hierarchical-recognition pre-pass) — localized, self-contained ---
+def _cmd_segment(args: argparse.Namespace) -> int:
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.gates.netlist import NetlistError
+    from infersynth.recognize import load_design_netlist, segment
+
+    try:
+        catalog = Catalog.load(args.catalog)
+    except CatalogError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        design = load_design_netlist(args.netlist)
+    except NetlistError as exc:
+        print(f"infersynth segment: {exc}", file=sys.stderr)
+        return 2
+    result = segment(design, catalog)
+    if args.out:
+        Path(args.out).write_text(result.to_json())
+    print(result.to_markdown())
+    sizes = sorted((len(s.component_refs) for s in result.segments), reverse=True)
+    print(
+        f"{len(result.segments)} segment(s) (largest {sizes[0] if sizes else 0}), "
         f"{len(result.residual)} residual component(s)",
         file=sys.stderr,
     )
@@ -733,7 +774,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_recognize.add_argument(
         "--out", metavar="OUT.json", help="write the RecognitionResult JSON to OUT"
     )
+    p_recognize.add_argument(
+        "--hierarchical",
+        action="store_true",
+        help="segment the netlist first (interface-bounded pre-pass), then recognize / "
+        "promote each segment — required to fire on a large vendor board",
+    )
     p_recognize.set_defaults(func=_cmd_recognize)
+
+    # segment (hierarchical-recognition pre-pass) — localized, self-contained.
+    p_segment = sub.add_parser(
+        "segment",
+        help="partition a design netlist into interface-bounded clusters (recognition pre-pass)",
+    )
+    p_segment.add_argument(
+        "--netlist", required=True, metavar="F.xml", help="design netlist (KiCad kicadxml)"
+    )
+    p_segment.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_segment.add_argument(
+        "--out", metavar="OUT.json", help="write the SegmentationResult JSON to OUT"
+    )
+    p_segment.set_defaults(func=_cmd_segment)
 
     # verify-recovered (Loom Pillar 2 honesty gate) — localized, self-contained.
     p_verify_rec = sub.add_parser(
