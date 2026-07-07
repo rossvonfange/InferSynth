@@ -41,14 +41,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from infersynth.bind.expr import BindingError, evaluate
 from infersynth.catalog import Catalog
 from infersynth.gates.runner import GateResult
-from infersynth.recognize.match import CellMatch, load_golden_graph, match_cell
-from infersynth.recognize.netlist import DesignNetlist, load_design_netlist
-from infersynth.recognize.recognizer import RecognitionResult
+
+if TYPE_CHECKING:
+    # Import lazily for typing only: infersynth.recognize.* imports
+    # infersynth.gates.netlist, so eagerly importing recognize here would close
+    # a cycle (gates.__init__ -> recovered_fabric -> recognize.match ->
+    # gates.netlist -> gates.__init__). Runtime uses import inside functions.
+    from infersynth.recognize.match import CellMatch
+    from infersynth.recognize.netlist import DesignNetlist
+    from infersynth.recognize.recognizer import RecognitionResult
 
 __all__ = [
     "SiteVerification",
@@ -315,6 +321,12 @@ def verify_recovered_fabric(
     a recorded FAIL in the report, not an exception (a crashing gate is a failing
     gate handled by the runner; here we itemize instead).
     """
+    # Local import breaks the gates<->recognize package cycle (see the module
+    # header): recognize imports gates.netlist, so gates must not import
+    # recognize at init time.
+    from infersynth.recognize.match import load_golden_graph, match_cell
+    from infersynth.recognize.netlist import load_design_netlist
+
     if isinstance(source_netlist, (str, Path)):
         design = load_design_netlist(source_netlist)
     else:
