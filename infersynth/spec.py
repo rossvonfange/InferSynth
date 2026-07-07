@@ -47,11 +47,11 @@ from infersynth.match.allocation import AllocationError, AllocationTable, alloca
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
 
-__all__ = ["Spec", "SpecError", "FeedEdge", "load_spec"]
+__all__ = ["Spec", "SpecError", "FeedEdge", "RailBind", "load_spec"]
 
 _TOP_KEYS = {
     "frd", "allocations", "profile", "endpoints", "knobs",
-    "feeds", "pins", "forbid_pack", "rail_aliases",
+    "feeds", "pins", "forbid_pack", "rail_aliases", "rail_binds",
 }
 _KNOB_KEYS = {"recall", "allocation", "absorption"}
 _ABSORPTION_VALUES = ("off", "conservative", "aggressive")
@@ -77,6 +77,23 @@ class FeedEdge:
 
 
 @dataclass(frozen=True)
+class RailBind:
+    """One per-requirement port→rail binding (NETFLOW ``rail_binds``).
+
+    Ties requirement ``at``'s cell port ``port`` onto rail net ``rail``,
+    OVERRIDING name-based rail grouping and ``rail_aliases`` for that exact
+    (requirement, port). This is what makes a *series* power chain expressible:
+    two ``VOUT`` ports on different requirements can be pinned to different
+    rails (a protection stage's raw ``VOUT`` vs. a regulator's regulated
+    ``VOUT``) even though name-based grouping would otherwise merge them.
+    """
+
+    at: str
+    port: str
+    rail: str
+
+
+@dataclass(frozen=True)
 class Spec:
     """A loaded ``spec.yaml`` (formal-spec artifact, WP-L1)."""
 
@@ -96,6 +113,13 @@ class Spec:
     forbid_pack: frozenset[str] = frozenset()
     #: NETFLOW rail aliasing: alias rail name -> canonical rail name (e.g. VCC -> VOUT)
     rail_aliases: dict[str, str] = field(default_factory=dict)
+    #: NETFLOW per-requirement rail bindings (override name/alias grouping).
+    rail_binds: tuple[RailBind, ...] = ()
+
+    def rail_binds_mapping(self) -> dict[tuple[str, str], str]:
+        """The rail binds as the ``{(requirement_id, port): rail}`` mapping the
+        rail resolver consumes (NETFLOW ``rail_binds`` threading)."""
+        return {(b.at, b.port): b.rail for b in self.rail_binds}
 
     def netflow_mapping(self) -> dict[str, object]:
         """The three NETFLOW keys as a YAML-round-trippable mapping (dump side).
@@ -113,6 +137,10 @@ class Spec:
             out["pins"] = dict(self.pins)
         if self.rail_aliases:
             out["rail_aliases"] = dict(sorted(self.rail_aliases.items()))
+        if self.rail_binds:
+            out["rail_binds"] = [
+                {"at": b.at, "port": b.port, "rail": b.rail} for b in self.rail_binds
+            ]
         if self.forbid_pack:
             out["forbid_pack"] = sorted(self.forbid_pack)
         return out
@@ -225,6 +253,31 @@ def _load_rail_aliases(raw: Any, where: str) -> dict[str, str]:
     return aliases
 
 
+def _load_rail_binds(raw: Any, where: str) -> tuple[RailBind, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise SpecError(f"{where} must be a list of {{at, port, rail}} mappings")
+    binds: list[RailBind] = []
+    seen: set[tuple[str, str]] = set()
+    for i, entry in enumerate(raw):
+        entry = _require_mapping(entry, f"{where}[{i}]")
+        unknown = sorted(set(entry) - {"at", "port", "rail"})
+        if unknown:
+            raise SpecError(f"{where}[{i}]: unknown key(s) {unknown}")
+        for key in ("at", "port", "rail"):
+            if not (isinstance(entry.get(key), str) and entry[key]):
+                raise SpecError(f"{where}[{i}].{key} must be a non-empty string")
+        key = (entry["at"], entry["port"])
+        if key in seen:
+            raise SpecError(
+                f"{where}[{i}]: duplicate binding for (at={key[0]!r}, port={key[1]!r})"
+            )
+        seen.add(key)
+        binds.append(RailBind(at=entry["at"], port=entry["port"], rail=entry["rail"]))
+    return tuple(binds)
+
+
 def load_spec(path: str | Path) -> Spec:
     """Load and validate a ``spec.yaml`` file. Raises :class:`SpecError`."""
     spec_path = Path(path)
@@ -265,6 +318,7 @@ def load_spec(path: str | Path) -> Spec:
     pins = _load_pins(raw.get("pins"), f"{spec_path}: pins")
     forbid_pack = _load_forbid_pack(raw.get("forbid_pack"), f"{spec_path}: forbid_pack")
     rail_aliases = _load_rail_aliases(raw.get("rail_aliases"), f"{spec_path}: rail_aliases")
+    rail_binds = _load_rail_binds(raw.get("rail_binds"), f"{spec_path}: rail_binds")
 
     return Spec(
         path=spec_path,
@@ -278,4 +332,5 @@ def load_spec(path: str | Path) -> Spec:
         pins=pins,
         forbid_pack=forbid_pack,
         rail_aliases=rail_aliases,
+        rail_binds=rail_binds,
     )

@@ -140,6 +140,7 @@ def synthesize(
     wiring: bool = True,
     verify: bool = False,
     rail_aliases: dict[str, str] | None = None,
+    rail_binds: dict[tuple[str, str], str] | None = None,
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -222,7 +223,12 @@ def synthesize(
             if outcome.winner is not None
         }
         wiring_plan = build_plan(
-            instantiated, winner_chains, catalog, feeds=feeds, rail_aliases=rail_aliases
+            instantiated,
+            winner_chains,
+            catalog,
+            feeds=feeds,
+            rail_aliases=rail_aliases,
+            rail_binds=rail_binds,
         )
         emit_wiring(root, wiring_plan, instantiated, catalog)
 
