@@ -24,6 +24,13 @@ from infersynth.gates.netlist_equiv import (
     compare_partitions,
     partition_equivalence_gate,
 )
+from infersynth.gates.recovered_fabric import (
+    GlueSite,
+    RecoveredFabricReport,
+    SiteVerification,
+    recovered_fabric_gate,
+    verify_recovered_fabric,
+)
 from infersynth.gates.report_io import (
     GateReportParseError,
     load_report_dict,
@@ -45,8 +52,11 @@ __all__ = [
     "GateStatus",
     "HarnessError",
     "HarnessResult",
+    "GlueSite",
     "NetlistError",
     "PartitionDiff",
+    "RecoveredFabricReport",
+    "SiteVerification",
     "TriageOutcome",
     "TriagePolicy",
     "ams_simulation_cell_gate",
@@ -63,7 +73,9 @@ __all__ = [
     "parse_golden_netlist",
     "parse_kicadxml",
     "partition_equivalence_gate",
+    "recovered_fabric_gate",
     "render_review_gate",
+    "verify_recovered_fabric",
     "report_to_dict",
     "run_cell_simulation",
     "run_design_simulation",
