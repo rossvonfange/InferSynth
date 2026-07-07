@@ -27,8 +27,12 @@ from dataclasses import dataclass, field
 
 from infersynth.catalog import Catalog
 from infersynth.ir import PortKind
+from infersynth.netflow.converge import converge_design
+from infersynth.netflow.decisions import WiringResolutionRequest
+from infersynth.netflow.feeds import resolve_feeds
 from infersynth.netflow.intra import intra_chain_nets
 from infersynth.netflow.rails import resolve_rails
+from infersynth.spec import FeedEdge
 
 __all__ = ["Net", "WiringPlan", "build_plan"]
 
@@ -59,6 +63,12 @@ class WiringPlan:
     nets: tuple[Net, ...]
     diagnostics: tuple[str, ...]
     unwired_signal_ports: tuple[tuple[str, str], ...]
+    #: wiring decisions the engine refused to guess (feeds/convergence ambiguity)
+    resolution_requests: tuple[WiringResolutionRequest, ...] = ()
+    #: declared feed edges that produced at least one net
+    feeds_resolved: tuple[FeedEdge, ...] = ()
+    #: (edge, reason) for declared feed edges that resolved to no net
+    feeds_unresolved: tuple[tuple[FeedEdge, str], ...] = ()
 
     @property
     def rails(self) -> tuple[Net, ...]:
@@ -71,7 +81,13 @@ class WiringPlan:
     @property
     def clean(self) -> bool:
         """True when the plan has no diagnostics and no unwired signal ports —
-        the gate-flip predicate for attempting full-hierarchy ERC-zero."""
+        the gate-flip predicate for attempting full-hierarchy ERC-zero.
+
+        Feed- and convergence-ambiguity requests each mirror into
+        ``diagnostics`` (and their unresolved ports stay in
+        ``unwired_signal_ports``), so this predicate already accounts for the
+        feeds/convergence net sources.
+        """
         return not self.diagnostics and not self.unwired_signal_ports
 
 
@@ -84,6 +100,8 @@ def build_plan(
     instances,
     winner_chains: dict[str, tuple[str, ...]],
     catalog: Catalog,
+    feeds: tuple[FeedEdge, ...] = (),
+    converge: bool = True,
 ) -> WiringPlan:
     """Assemble a :class:`WiringPlan` from instantiated cells + winner chains.
 
@@ -92,9 +110,16 @@ def build_plan(
     Cell`). *winner_chains* maps a requirement id to its winning chain's cell
     keys IN ORDER — only chains with more than one cell need appear (single-cell
     winners imply no intra-chain net). Rails are resolved for *all* instances.
+
+    Net sources are layered cheapest-first (NETFLOW.md tiers): rails, then
+    intra-chain, then declared *feeds* (tier 2), then design-scope
+    *convergence* over the residual (tier 1, run last so it only proposes nets
+    for ports nothing else claimed). ``converge=False`` skips the convergence
+    pass. Feeds nets are named ``f_<src>_<dst>[_<role>]``, converged ``c_<k>``.
     """
     instances = list(instances)
     diagnostics: list[str] = []
+    requests: list[WiringResolutionRequest] = []
 
     # --- tier 1: rails (all instances) ---
     rail_plan = resolve_rails(instances, catalog)
@@ -126,6 +151,27 @@ def build_plan(
             )
             wired_signal_ports.update(members)
 
+    # --- tier 2: declared feeds (may close cycles) ---
+    feeds_res = resolve_feeds(feeds, instances, catalog)
+    diagnostics.extend(feeds_res.diagnostics)
+    requests.extend(feeds_res.requests)
+    for fnet in feeds_res.nets:
+        signal_nets.append(
+            Net(kind="signal", name=fnet.name, driven=True, members=fnet.members)
+        )
+        wired_signal_ports.update(fnet.members)
+
+    # --- tier 1: design-scope convergence over the residual ---
+    if converge:
+        conv_res = converge_design(instances, catalog, already_wired=set(wired_signal_ports))
+        diagnostics.extend(conv_res.diagnostics)
+        requests.extend(conv_res.requests)
+        for cnet in conv_res.nets:
+            signal_nets.append(
+                Net(kind="signal", name=cnet.name, driven=True, members=cnet.members)
+            )
+            wired_signal_ports.update(cnet.members)
+
     # --- residual: signal ports touched by no signal net ---
     unwired: list[tuple[str, str]] = []
     for inst in instances:
@@ -143,6 +189,9 @@ def build_plan(
         nets=nets,
         diagnostics=tuple(diagnostics),
         unwired_signal_ports=tuple(sorted(unwired)),
+        resolution_requests=tuple(requests),
+        feeds_resolved=feeds_res.resolved,
+        feeds_unresolved=feeds_res.unresolved,
     )
 
 

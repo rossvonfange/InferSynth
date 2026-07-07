@@ -150,8 +150,9 @@ def synthesize(
 
     ``pins`` (NETFLOW ``[use:]``) thread into :func:`infersynth.match.match` so
     a pinned requirement's cell becomes its winner. ``feeds`` (NETFLOW declared
-    dataflow) are pass-through in this stage: carried onto the result and
-    rendered under "Declared feeds (not yet wired)" — no wiring is emitted.
+    dataflow) are consumed into the wiring plan: any FRD ``[feeds:]`` pragma is
+    compiled and merged with the *feeds* argument, then resolved to port-level
+    nets (:mod:`infersynth.netflow.feeds`) that join the emitted design.
     """
     frd = Path(frd)
     out_dir = Path(out_dir)
@@ -159,6 +160,12 @@ def synthesize(
     prof = load_profile(profile)
 
     reqset, _lint_diags = lint_path(frd, catalog_dir=catalog_dir)
+    # NETFLOW: FRD [feeds:] pragmas compile into declared feed edges, merged
+    # (additively) with any feeds passed in explicitly (spec-file feeds).
+    from infersynth.lint.pragmas import compile_pragmas
+
+    pragma_feeds = compile_pragmas(reqset).spec.feeds
+    feeds = tuple(dict.fromkeys((*feeds, *pragma_feeds)))
     mres = match(
         reqset, catalog, allocations=allocations, knobs=knobs, endpoints=endpoints, pins=pins
     )
@@ -213,7 +220,7 @@ def synthesize(
             for rid, outcome in decision.outcomes.items()
             if outcome.winner is not None
         }
-        wiring_plan = build_plan(instantiated, winner_chains, catalog)
+        wiring_plan = build_plan(instantiated, winner_chains, catalog, feeds=feeds)
         emit_wiring(root, wiring_plan, instantiated, catalog)
 
     # Full-hierarchy ERC is REPORTED, never hard-gated here (NETFLOW build
@@ -354,18 +361,43 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
         ports = ", ".join(sorted(cell.ports)) if cell is not None and cell.ports else "?"
         lines.append(f"- `{inst.instname}` ({inst.cell_key}): {ports}")
     if result.feeds:
+        resolved_set = set(plan.feeds_resolved)
+        unresolved_map = {e: r for e, r in plan.feeds_unresolved}
         lines += [
             "",
-            "## Declared feeds (not yet wired)",
+            "## Declared feeds",
             "",
             "Requirement-level dataflow declared via NETFLOW `feeds` (spec or FRD "
-            "`[feeds:]` pragma). Pass-through only at this stage — the wiring "
-            "plan stage consumes these; synthesis does not draw them yet:",
+            "`[feeds:]` pragma), resolved to port-level nets and drawn onto the "
+            "design:",
             "",
+            "| feed | status |",
+            "|---|---|",
         ]
         for edge in result.feeds:
-            dst = f"{edge.dst}.{edge.dst_port}" if edge.dst_port else edge.dst
-            lines.append(f"- `{edge.src}` → `{dst}`")
+            dst = f"{edge.dst}:{edge.dst_port}" if edge.dst_port else edge.dst
+            if edge in resolved_set:
+                status = "**wired**"
+            elif edge in unresolved_map:
+                status = f"unresolved — {unresolved_map[edge]}"
+            else:
+                status = "unresolved"
+            lines.append(f"| `{edge.src}` → `{dst}` | {status} |")
+
+    if plan.resolution_requests:
+        lines += [
+            "",
+            "## Wiring decisions needed (ask-rather-than-guess)",
+            "",
+            "The engine found more than one admissible assignment and refused to "
+            "guess (NETFLOW.md). Resolve each between runs with a declared "
+            "`feeds` entry:",
+            "",
+        ]
+        for req in plan.resolution_requests:
+            opts = "; ".join(f"{o.source} → {o.sink}" for o in req.options)
+            lines.append(f"- **[{req.kind}] {req.edge}** — options: {opts}")
+
     if plan.unwired_signal_ports:
         lines += [
             "These signal ports were not uniquely inferable (independent "
