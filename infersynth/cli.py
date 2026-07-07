@@ -440,6 +440,64 @@ def _cmd_bom(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stuff(args: argparse.Namespace) -> int:
+    """Compile an FRD onto a pre-routed fabric (docs/FABRIC.md, deliverable 4)."""
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.decide import decide
+    from infersynth.fabric import (
+        FabricError,
+        extracted_params_for_winners,
+        fit,
+        load_fabric,
+        stuff,
+    )
+    from infersynth.lint import lint_path
+    from infersynth.lint.reqif_io import ReqIFImportError
+    from infersynth.match import match
+
+    fabric_arg = Path(args.fabric)
+    fabric_yaml = fabric_arg / "fabric.yaml" if fabric_arg.is_dir() else fabric_arg
+
+    try:
+        catalog = Catalog.load(args.catalog)
+        fabric = load_fabric(fabric_yaml, catalog)
+        reqset, _diags = lint_path(args.frd, catalog_dir=args.catalog)
+        mres = match(reqset, catalog)
+        decision = decide(mres, catalog, args.profile)
+    except (OSError, ReqIFImportError, CatalogError, FabricError, ValueError) as exc:
+        print(f"infersynth stuff: {exc}", file=sys.stderr)
+        return 1
+
+    winners = {
+        rid: fin.chain.cells[0]
+        for rid, fin in decision.winners().items()
+        if len(fin.chain.cells) == 1
+    }
+    resolved = extracted_params_for_winners(mres, decision, catalog)
+    fit_result = fit(winners, fabric, catalog=catalog, resolved_params=resolved)
+    result = stuff(fabric, fit_result, args.out, catalog)
+
+    print(f"fabric: {fabric.name}  ({args.frd})")
+    print(
+        f"utilization: {fit_result.utilization:.0%} "
+        f"({len(fit_result.stuffed_sites)}/{fit_result.total_sites} sites)"
+    )
+    for s in fit_result.stuffed_sites:
+        print(f"  + {s.requirement_id} -> site {s.site_id}  ({s.cell_key})")
+    if fit_result.dnp_sites:
+        print(f"DNP: {len(fit_result.dnp_sites)} site(s): {', '.join(fit_result.dnp_sites)}")
+    for sv in fit_result.value_stuffing:
+        print(f"  value {sv.board_ref} = {sv.value:g} (site {sv.site_id})")
+    for req_id, cell_key in fit_result.unfittable:
+        print(f"  ! unfittable {req_id}: {cell_key}")
+    for d in fit_result.diagnostics:
+        print(f"  ! {d}")
+    print(f"board: {result.board_path}")
+    print(f"report: {result.report_path}")
+    print(f"bom: {result.bom_path}  ({result.bom.summary})")
+    return 3 if fit_result.unfittable else 0
+
+
 def _cmd_costs_lock(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
     from infersynth.decide.lockfile import write as write_lockfile
@@ -705,6 +763,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", metavar="bom.csv", help="write CSV to a file (default: stdout)"
     )
     p_bom.set_defaults(func=_cmd_bom)
+
+    p_stuff = sub.add_parser(
+        "stuff",
+        help="compile an FRD onto a pre-routed fabric by POPULATION "
+        "(DNP set + value stuffing; no placement, no routing) — docs/FABRIC.md",
+    )
+    p_stuff.add_argument("--frd", required=True, metavar="F", help="FRD markdown/.reqif")
+    p_stuff.add_argument("--catalog", required=True, metavar="C", help="catalog directory")
+    p_stuff.add_argument(
+        "--fabric",
+        required=True,
+        metavar="DIR",
+        help="fabric directory (holding fabric.yaml) or a fabric.yaml path",
+    )
+    p_stuff.add_argument("--out", required=True, metavar="DIR", help="output directory")
+    p_stuff.add_argument(
+        "--profile",
+        default="production",
+        metavar="NAME",
+        help="weight profile (default: production)",
+    )
+    p_stuff.set_defaults(func=_cmd_stuff)
 
     p_costs = sub.add_parser("costs", help="cost lockfile operations")
     costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)
