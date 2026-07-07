@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -237,3 +238,116 @@ def test_nav_present_on_catalog_gates_and_designs_pages(client: TestClient):
         assert 'href="/"' in body
         assert 'href="/gates"' in body
         assert 'href="/designs"' in body
+
+
+# --------------------------------------------------------------------------
+# round-3 "surface catch-up": wiring_plan.json / resolutions_needed.json /
+# BOM view.
+# --------------------------------------------------------------------------
+
+
+def test_design_page_shows_wired_nets_and_decisions_needed(tmp_path: Path):
+    # Synthetic artifacts fixture: hand-written wiring_plan.json +
+    # resolutions_needed.json in the shape the real pipeline/synthesize
+    # writers emit (see infersynth.gates.design_netlist.plan_to_dict and
+    # infersynth.pipeline.PipelineResult.resolutions_document), rather than
+    # a full synthesize()/run_pipeline() run — the panel is a pure reader of
+    # these two artifacts regardless of what produced them.
+    out = tmp_path / "synthetic"
+    out.mkdir()
+    (out / "SYNTHESIS.md").write_text(
+        "# Synthesis report\n\n(synthetic fixture)\n", encoding="utf-8"
+    )
+    (out / "wiring_plan.json").write_text(
+        json.dumps(
+            {
+                "instances": {"amp": "core/opamp-gain-noninverting@0.1.0"},
+                "nets": [{"kind": "rail", "name": "VCC", "members": [["amp", "vcc"]]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / "resolutions_needed.json").write_text(
+        json.dumps(
+            {
+                "schema": "infersynth.pipeline.resolutions/v0",
+                "converged": True,
+                "rounds": 2,
+                "all_decided": False,
+                "resolutions": [
+                    {
+                        "id": "undecided:R-3",
+                        "kind": "no-candidates",
+                        "subject": "R-3",
+                        "options": [],
+                        "spec_edit": "add a cell/template covering `R-3` (catalog gap)",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+    resp = client.get("/design", params={"path": str(out)})
+    assert resp.status_code == 200
+    body = resp.text
+
+    # wired-nets table (name/kind/members) sourced from wiring_plan.json.
+    assert "VCC" in body
+    assert ">rail<" in body
+    assert "amp.vcc" in body
+
+    # decisions-needed entry with a copyable spec_edit.
+    assert "no-candidates" in body
+    assert "R-3" in body
+    assert "add a cell/template covering" in body
+    assert "<pre><code>" in body
+
+
+def test_design_page_wiring_plan_parse_error_is_loud(tmp_path: Path):
+    out = tmp_path / "broken_wiring"
+    out.mkdir()
+    (out / "SYNTHESIS.md").write_text("# Synthesis report\n", encoding="utf-8")
+    (out / "wiring_plan.json").write_text("not json", encoding="utf-8")
+
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+    resp = client.get("/design", params={"path": str(out)})
+    assert resp.status_code == 200
+    assert "wiring_plan.json error" in resp.text
+
+
+def test_design_page_shows_bom_summary_and_link(tmp_path: Path):
+    out = _write_demo_design(tmp_path, DEMO_FRD, "bom_summary_design")
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+
+    resp = client.get("/design", params={"path": str(out)})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "parts bound" in body
+    assert f"/design/bom?path={out}" in body
+    # source annotation documents the structured artifact used.
+    assert "build_bom()" in body
+
+
+def test_design_bom_view_renders_grouped_rows(tmp_path: Path):
+    out = _write_demo_design(tmp_path, DEMO_FRD, "bom_view_design")
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+
+    resp = client.get("/design/bom", params={"path": str(out)})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "MPN" in body
+    assert "OPA340NA" in body  # the noninverting-amp opamp's stamped part
+    assert "no bound parts" not in body
+
+
+def test_design_bom_view_404_for_missing_dir(tmp_path: Path):
+    app = create_app(catalog_dir=GOLDEN_CATALOG)
+    client = TestClient(app)
+    resp = client.get("/design/bom", params={"path": str(tmp_path / "nope")})
+    assert resp.status_code == 404

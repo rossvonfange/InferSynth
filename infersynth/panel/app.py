@@ -17,11 +17,18 @@ Routes:
   that contain a ``SYNTHESIS.md``, with decided/undecided counts read from
   each design's ``selection_trace.json``.
 * ``GET /design?path=...`` — render one design directory: its
-  ``SYNTHESIS.md`` and its ``selection_trace.json`` (decision explanation).
+  ``SYNTHESIS.md``, ``selection_trace.json`` (decision explanation),
+  ``wiring_plan.json`` (wired-nets table), ``resolutions_needed.json``
+  ("Decisions needed") and a verification summary (ERC / design-sim /
+  design-netlist / BOM — see :func:`_verification_summary` for the
+  per-section source).
+* ``GET /design/bom?path=...`` — the design's grouped BOM as a table
+  (``bind.bom`` library functions; never shells out).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +36,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, Response
 
 from infersynth.catalog import Catalog, CatalogError, CellPackage
-from infersynth.panel import gate_io, render, templates, trace_io
+from infersynth.panel import gate_io, render, resolutions_io, templates, trace_io, wiring_io
 
 __all__ = ["create_app"]
 
@@ -84,6 +91,60 @@ def _list_designs(base: Path) -> list[dict[str, Any]]:
                 pass
         out.append({"name": sub.name, "path": str(sub), "decided": decided, "total": total})
     return out
+
+
+def _section_first_line(text: str, heading: str) -> str | None:
+    """The first non-empty line under a ``## <heading>`` in *text*.
+
+    ``synthesize._render_report`` always puts the one-line summary directly
+    after a blank line following the heading (see its ERC/design-sim/
+    design-netlist sections) — no dedicated JSON artifact exists for these
+    gates today, so SYNTHESIS.md's own markdown is the only source.
+    """
+    m = re.search(rf"^## {re.escape(heading)}\s*$", text, flags=re.MULTILINE)
+    if m is None:
+        return None
+    rest = text[m.end() :].lstrip("\n")
+    for line in rest.splitlines():
+        if line.strip():
+            return line.strip()
+    return None
+
+
+def _verification_summary(design_dir: Path, synthesis_text: str) -> dict[str, tuple[str, str]]:
+    """Verification summary lines: ``(value, source)`` per check.
+
+    BOM is sourced from the structured library call (:func:`infersynth.bind.
+    bom.build_bom` — deterministic, reads the stamped sheets directly, no
+    parsing of rendered markdown needed); ERC/design-sim/design-netlist have
+    no persisted structured artifact yet, so they are read back out of
+    ``SYNTHESIS.md``'s own one-line summaries.
+    """
+    lines: dict[str, tuple[str, str]] = {}
+
+    erc = _section_first_line(synthesis_text, "Full-hierarchy ERC (reported, not gated)")
+    if erc is not None:
+        lines["ERC"] = (erc, "SYNTHESIS.md")
+
+    design_sim = _section_first_line(
+        synthesis_text, "Design-level simulation (SEED_PLAN §1 crit 3)"
+    )
+    if design_sim is not None:
+        lines["Design simulation"] = (design_sim, "SYNTHESIS.md")
+
+    design_netlist = _section_first_line(
+        synthesis_text, "Design-level netlist partition-equivalence (reported, not gated)"
+    )
+    if design_netlist is not None:
+        lines["Design netlist"] = (design_netlist, "SYNTHESIS.md")
+
+    from infersynth.bind.bom import build_bom
+
+    bom = build_bom(design_dir)
+    if bom.total_parts:
+        lines["BOM"] = (bom.summary, "infersynth.bind.bom.build_bom()")
+
+    return lines
 
 
 def create_app(
@@ -190,7 +251,8 @@ def create_app(
                 ),
                 status_code=404,
             )
-        synthesis_html = templates.render_markdown(synth_path.read_text(encoding="utf-8"))
+        synthesis_text = synth_path.read_text(encoding="utf-8")
+        synthesis_html = templates.render_markdown(synthesis_text)
 
         trace: dict[str, Any] | None = None
         trace_error: str | None = None
@@ -201,8 +263,68 @@ def create_app(
             except trace_io.TraceParseError as exc:
                 trace_error = str(exc)
 
+        wiring_nets: list[dict[str, Any]] | None = None
+        wiring_error: str | None = None
+        wiring_path = design_dir / "wiring_plan.json"
+        if wiring_path.is_file():
+            try:
+                wiring_nets = wiring_io.load_wiring_plan_dict(wiring_path)["nets"]
+            except wiring_io.WiringPlanParseError as exc:
+                wiring_error = str(exc)
+
+        resolutions: list[dict[str, Any]] | None = None
+        resolutions_error: str | None = None
+        resolutions_path = design_dir / "resolutions_needed.json"
+        if resolutions_path.is_file():
+            try:
+                resolutions = resolutions_io.load_resolutions_dict(resolutions_path)[
+                    "resolutions"
+                ]
+            except resolutions_io.ResolutionsParseError as exc:
+                resolutions_error = str(exc)
+
+        verification = _verification_summary(design_dir, synthesis_text)
+        bom_url = f"/design/bom?path={path}" if "BOM" in verification else None
+
         return HTMLResponse(
-            templates.design_page(design_dir.name, synthesis_html, trace, trace_error)
+            templates.design_page(
+                design_dir.name,
+                synthesis_html,
+                trace,
+                trace_error,
+                wiring_nets=wiring_nets,
+                wiring_error=wiring_error,
+                verification=verification,
+                resolutions=resolutions,
+                resolutions_error=resolutions_error,
+                bom_url=bom_url,
+            )
+        )
+
+    @app.get("/design/bom", response_class=HTMLResponse)
+    def design_bom_view(path: str = Query(...)) -> Response:
+        design_dir = Path(path)
+        if not design_dir.is_dir():
+            return HTMLResponse(
+                templates.error_page("Design not found", f"no directory at {path}"),
+                status_code=404,
+            )
+        from infersynth.bind.bom import build_bom
+
+        bom = build_bom(design_dir)
+        rows = [
+            {
+                "refs": list(line.refs),
+                "qty": line.qty,
+                "value": line.value,
+                "mpn": line.mpn,
+                "manufacturer": line.manufacturer,
+                "footprint": line.footprint,
+            }
+            for line in bom.lines
+        ]
+        return HTMLResponse(
+            templates.bom_page(path, design_dir.name, bom.summary, rows, list(bom.unbound))
         )
 
     return app

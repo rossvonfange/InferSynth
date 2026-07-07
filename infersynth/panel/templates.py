@@ -470,11 +470,92 @@ def _render_trace(trace: dict[str, Any]) -> str:
     return header + reqs_html
 
 
+def wiring_nets_table(nets: list[dict[str, Any]], error: str | None) -> str:
+    """The wired-nets table sourced from ``wiring_plan.json`` (structured;
+    name/kind/members only — that artifact carries no ``driven``/diagnostics
+    field, see :mod:`infersynth.panel.wiring_io`). Parse errors are surfaced
+    loudly (a fail banner), never hidden.
+    """
+    if error:
+        return f'<div class="banner fail">wiring_plan.json error: {_e(error)}</div>'
+    if not nets:
+        return '<p class="muted">No wiring_plan.json found for this design ' \
+            "(persisted only when synthesis ran with verify=True).</p>"
+    rows = []
+    for n in nets:
+        members = ", ".join(f"{_e(i)}.{_e(p)}" for i, p in n["members"])
+        rows.append(
+            "<tr>"
+            f'<td class="mono">{_e(n["name"])}</td>'
+            f'<td class="mono">{_e(n["kind"])}</td>'
+            f"<td>{members or '&mdash;'}</td>"
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>Net</th><th>Kind</th><th>Members</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def verification_summary(lines: dict[str, tuple[str, str]]) -> str:
+    """Short summary lines for ERC / design-sim / design-netlist / BOM.
+
+    *lines* maps a label to ``(value, source)`` — *source* documents where the
+    line came from (``"SYNTHESIS.md"`` when no dedicated structured artifact
+    exists yet for that gate, or the structured artifact's name, e.g.
+    ``"bind.bom.build_bom()"``) so the page never hides its own provenance.
+    """
+    if not lines:
+        return '<p class="muted">No verification data for this design.</p>'
+    rows = "".join(
+        f"<tr><th>{_e(label)}</th><td>{_e(value)}</td>"
+        f'<td class="muted mono">{_e(source)}</td></tr>'
+        for label, (value, source) in lines.items()
+    )
+    return (
+        "<table><thead><tr><th>Check</th><th>Result</th><th>Source</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def decisions_needed(resolutions: list[dict[str, Any]], error: str | None) -> str:
+    """The ``resolutions_needed.json`` "Decisions needed" list — each entry's
+    ``spec_edit`` rendered as copyable code (a ``pipeline`` artifact; absent
+    when the design was produced by the one-shot ``synthesize`` rather than
+    ``run_pipeline``)."""
+    if error:
+        return f'<div class="banner fail">resolutions_needed.json error: {_e(error)}</div>'
+    if not resolutions:
+        return (
+            '<p class="muted">No resolutions_needed.json found for this design '
+            "(written only by the pipeline driver, not the one-shot synthesize).</p>"
+        )
+    items = []
+    for r in resolutions:
+        opt_items = "".join(f"<li class='mono'>{_e(o)}</li>" for o in r["options"])
+        opts = f"<ul class='plain'>{opt_items}</ul>" if r["options"] else ""
+        items.append(
+            "<li>"
+            f"<p><strong>[{_e(r['kind'])}]</strong> {_e(r['subject'])} "
+            f"<span class='muted mono'>({_e(r['id'])})</span></p>"
+            f"{opts}"
+            f"<pre><code>{_e(r['spec_edit'])}</code></pre>"
+            "</li>"
+        )
+    return f"<ul class='plain'>{''.join(items)}</ul>"
+
+
 def design_page(
     name: str,
     synthesis_html: str,
     trace: dict[str, Any] | None,
     trace_error: str | None,
+    wiring_nets: list[dict[str, Any]] | None = None,
+    wiring_error: str | None = None,
+    verification: dict[str, tuple[str, str]] | None = None,
+    resolutions: list[dict[str, Any]] | None = None,
+    resolutions_error: str | None = None,
+    bom_url: str | None = None,
 ) -> str:
     if trace_error:
         trace_html = f'<div class="banner fail">Selection trace error: {_e(trace_error)}</div>'
@@ -483,9 +564,26 @@ def design_page(
     else:
         trace_html = '<p class="muted">No selection_trace.json found for this design.</p>'
 
+    wiring_html = wiring_nets_table(wiring_nets or [], wiring_error)
+    verification_html = verification_summary(verification or {})
+    decisions_html = decisions_needed(resolutions or [], resolutions_error)
+    bom_link_html = (
+        f'<p><a href="{_e(bom_url)}">View full BOM &rarr;</a></p>' if bom_url else ""
+    )
+
     body = f"""
 <p><a href="/designs">&larr; designs</a></p>
 <h1>{_e(name)}</h1>
+
+<h2>Verification summary</h2>
+{verification_html}
+{bom_link_html}
+
+<h2>Wired nets (wiring_plan.json)</h2>
+{wiring_html}
+
+<h2>Decisions needed</h2>
+{decisions_html}
 
 <h2>Synthesis report</h2>
 {synthesis_html}
@@ -494,6 +592,45 @@ def design_page(
 {trace_html}
 """
     return page(f"InferSynth — {name}", body, active="designs")
+
+
+def bom_page(
+    design_path: str, design_name: str, summary: str, rows: list[dict[str, Any]], unbound: list[str]
+) -> str:
+    """``/design/bom`` — the grouped BOM rendered as a table."""
+    table_rows = "".join(
+        "<tr>"
+        f'<td class="mono">{_e(" ".join(r["refs"]))}</td>'
+        f'<td class="mono">{_e(r["qty"])}</td>'
+        f'<td>{_e(r["value"])}</td>'
+        f'<td class="mono">{_e(r["mpn"])}</td>'
+        f"<td>{_e(r['manufacturer'])}</td>"
+        f'<td class="mono">{_e(r["footprint"])}</td>'
+        "</tr>"
+        for r in rows
+    )
+    empty_row = '<tr><td colspan="6" class="muted">no bound parts</td></tr>'
+    table = (
+        "<table><thead><tr><th>Refs</th><th>Qty</th><th>Value</th><th>MPN</th>"
+        "<th>Manufacturer</th><th>Footprint</th></tr></thead><tbody>"
+        + (table_rows or empty_row)
+        + "</tbody></table>"
+    )
+    unbound_html = ""
+    if unbound:
+        items = "".join(f"<li class='mono'>{_e(u)}</li>" for u in unbound)
+        unbound_html = (
+            '<div class="banner fail">UNBOUND — no MPN stamped:'
+            f'<ul class="plain">{items}</ul></div>'
+        )
+    body = f"""
+<p><a href="/design?path={_e(design_path)}">&larr; {_e(design_name)}</a></p>
+<h1>{_e(design_name)} &mdash; BOM</h1>
+<p class="muted">{_e(summary)}</p>
+{unbound_html}
+{table}
+"""
+    return page(f"InferSynth — {design_name} BOM", body, active="designs")
 
 
 def error_page(title: str, message: str, status_hint: str = "") -> str:
