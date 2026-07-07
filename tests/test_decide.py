@@ -149,6 +149,58 @@ class TestCostComposition:
 
 
 # --------------------------------------------------------------------------
+# 1b. per-cell cost breakdown on the finalist (Loom API-hardening #2)
+# --------------------------------------------------------------------------
+
+
+class TestPerCellCostBreakdown:
+    """``Finalist.cell_costs`` exposes the un-composed per-cell vectors alongside
+    the composed ``cost`` — so a consumer gets per-cell area even when the
+    composed vector is unpriced-contagious."""
+
+    def test_breakdown_is_in_chain_order_and_sums_to_composed(self):
+        cat = fake_catalog(
+            {
+                "core/a@1": {"bom": {"qty1": 1.0}, "area_mm2": 10, "part_count": 2},
+                "core/b@1": {"bom": {"qty1": 0.5}, "area_mm2": 4, "part_count": 1},
+            }
+        )
+        mr = match_result({"R-1": (chain("R-1", "core/a@1", "core/b@1"),)})
+        fin = decide(mr, cat, "prototype").outcomes["R-1"].winner
+        assert [k for k, _ in fin.cell_costs] == ["core/a@1", "core/b@1"]
+        assert fin.cost_for_cell("core/a@1").area_mm2 == pytest.approx(10)
+        assert fin.cost_for_cell("core/b@1").area_mm2 == pytest.approx(4)
+        assert sum(cv.area_mm2 for _, cv in fin.cell_costs) == pytest.approx(fin.cost.area_mm2)
+
+    def test_breakdown_survives_unpriced_contagion(self):
+        # one unpriced cell zeroes the COMPOSED vector (unpriced-contagious),
+        # but the priced cell keeps its own area in the breakdown.
+        cat = fake_catalog(
+            {"core/priced@1": {"area_mm2": 42, "bom": {"qty1": 1.0}}, "core/free@1": {}}
+        )
+        mr = match_result({"R-1": (chain("R-1", "core/priced@1", "core/free@1"),)})
+        fin = decide(mr, cat, "prototype").outcomes["R-1"].winner
+        assert fin.cost.unpriced                       # composed chain is unpriced
+        assert fin.cost.area_mm2 == 0.0                # zeroed by contagion
+        assert fin.cost_for_cell("core/priced@1").area_mm2 == pytest.approx(42)
+        assert fin.cost_for_cell("core/free@1").unpriced
+        assert fin.cost_for_cell("core/absent@1") is None
+
+    def test_cost_composition_is_unchanged_backward_compat(self):
+        # the composed cost still composes exactly as before (no behavior change).
+        cat = fake_catalog(
+            {
+                "core/a@1": {"bom": {"qty1": 1.0}, "area_mm2": 10},
+                "core/b@1": {"bom": {"qty1": 0.5}, "area_mm2": 4},
+            }
+        )
+        mr = match_result({"R-1": (chain("R-1", "core/a@1", "core/b@1"),)})
+        fin = decide(mr, cat, "prototype").outcomes["R-1"].winner
+        assert fin.cost.area_mm2 == pytest.approx(14)
+        assert fin.cost.bom_at("qty1") == pytest.approx(1.5)
+
+
+# --------------------------------------------------------------------------
 # 2. profile flip (the PIC-vs-555 flip in miniature)
 # --------------------------------------------------------------------------
 

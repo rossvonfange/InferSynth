@@ -41,11 +41,22 @@ UNDECIDED_NO_CANDIDATES = "undecided-no-candidates"
 
 @dataclass(frozen=True)
 class Finalist:
-    """One scored competing cover for a requirement."""
+    """One scored competing cover for a requirement.
+
+    ``cost`` is the composed chain vector (SELECTION §6 rule 1: covers compete
+    as a whole); it is *unpriced-contagious* — one unpriced cell zeroes the
+    whole chain's numeric dimensions. ``cell_costs`` is the per-cell breakdown
+    *alongside* it (each cell's own :class:`CostVector`, in chain order), so a
+    consumer can read per-cell area for a multi-cell winner even when the
+    composed vector is unpriced. Empty only when a Finalist is built without the
+    breakdown (e.g. hand-constructed); the decision engine always fills it.
+    """
 
     chain: CandidateChain
     cost: CostVector
     score: float
+    #: (cell_key, its own CostVector) in chain order — the un-composed breakdown.
+    cell_costs: tuple[tuple[str, CostVector], ...] = ()
 
     @property
     def key(self) -> tuple[str, ...]:
@@ -55,6 +66,17 @@ class Finalist:
     @property
     def unpriced(self) -> bool:
         return self.cost.unpriced
+
+    def cost_for_cell(self, cell_key: str) -> CostVector | None:
+        """This finalist's own cost vector for *cell_key* (first match), or None.
+
+        Reads the :attr:`cell_costs` breakdown — the per-cell area a consumer
+        needs when the composed :attr:`cost` is unpriced-contagious.
+        """
+        for key, cv in self.cell_costs:
+            if key == cell_key:
+                return cv
+        return None
 
 
 @dataclass(frozen=True)
@@ -99,26 +121,35 @@ class Decision:
         return bool(self.outcomes) and all(o.decided for o in self.outcomes.values())
 
 
-def _cost_for_chain(
+def _per_cell_costs(
     chain: CandidateChain, catalog: Catalog, lockfile: Lockfile | None
-) -> CostVector:
-    """Compose a chain's cost vector from its cells (lockfile overrides applied).
+) -> tuple[tuple[str, CostVector], ...]:
+    """The per-cell cost vectors of a chain, in chain order (before composition).
 
     A cell absent from the catalog, or one with no ``costs:`` block, contributes
-    an unpriced vector — which makes the whole cover unpriced (SELECTION §6).
+    an unpriced vector (which makes the *composed* cover unpriced, SELECTION §6)
+    — but its own vector is kept here so the per-cell breakdown survives the
+    unpriced-contagion of :func:`~infersynth.decide.costs.compose`.
     """
-    vectors: list[CostVector] = []
+    out: list[tuple[str, CostVector]] = []
     for key in chain.cells:
         try:
             cell = catalog.get(key)
         except Exception:  # noqa: BLE001 — any resolution failure ⇒ unpriced
-            vectors.append(CostVector(unpriced=True))
+            out.append((key, CostVector(unpriced=True)))
             continue
         costs = dict(cell.costs)
         if lockfile is not None:
             costs = lockfile.apply_overrides(cell.key, costs)
-        vectors.append(cost_vector_for_cell(costs))
-    return compose(vectors)
+        out.append((key, cost_vector_for_cell(costs)))
+    return tuple(out)
+
+
+def _cost_for_chain(
+    chain: CandidateChain, catalog: Catalog, lockfile: Lockfile | None
+) -> CostVector:
+    """Compose a chain's cost vector from its cells (lockfile overrides applied)."""
+    return compose([cv for _key, cv in _per_cell_costs(chain, catalog, lockfile)])
 
 
 def _pick_winner(finalists: tuple[Finalist, ...]) -> tuple[Finalist, str]:
@@ -217,11 +248,12 @@ def _score_finalists(
     """Build + score the finalists for one requirement (order preserved)."""
     if not chains:
         return (), {}
-    vectors = [_cost_for_chain(c, catalog, lockfile) for c in chains]
+    per_cell = [_per_cell_costs(c, catalog, lockfile) for c in chains]
+    vectors = [compose([cv for _k, cv in pc]) for pc in per_cell]
     scores, per_dim = score_candidates(vectors, profile)
     finalists = tuple(
-        Finalist(chain=c, cost=v, score=s)
-        for c, v, s in zip(chains, vectors, scores, strict=True)
+        Finalist(chain=c, cost=v, score=s, cell_costs=pc)
+        for c, v, pc, s in zip(chains, vectors, per_cell, scores, strict=True)
     )
     normalized = {dim: tuple(col) for dim, col in per_dim.items()}
     return finalists, normalized
