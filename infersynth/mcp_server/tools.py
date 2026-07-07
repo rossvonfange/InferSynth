@@ -13,10 +13,11 @@ test_mcp_server.py``).
 Tool list (DESIGN.md section 9, ``infersynth-mcp``):
 
 * implemented today: ``lint_frd``, ``catalog_search``, ``catalog_validate``,
-  ``bind_cell``, ``instantiate_cell``, ``run_gates``
+  ``bind_cell``, ``instantiate_cell``, ``run_gates``, ``synthesize``,
+  ``bom``, ``pipeline``
 * stubbed, raise :class:`NotImplementedStageError` naming the BUILD_PLAN
   stage that delivers them: ``elaborate_spec``, ``match_catalog``,
-  ``synthesize``, ``catalog_submit_check``
+  ``catalog_submit_check``
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ __all__ = [
     "bind_cell",
     "instantiate_cell",
     "run_gates",
+    "bom",
+    "pipeline",
     "elaborate_spec",
     "match_catalog",
     "synthesize",
@@ -291,6 +294,133 @@ def run_gates(
 
 
 # --------------------------------------------------------------------------
+# bom
+# --------------------------------------------------------------------------
+
+
+def bom(design_dir: str) -> dict[str, Any]:
+    """Roll up a synthesized design's stamped parts into a grouped BOM.
+
+    Thin adapter over :func:`infersynth.bind.bom.build_bom` (same library the
+    ``infersynth bom`` CLI and the sidecar panel's ``/design/bom`` view use —
+    reads the stamped ``MPN``/``Manufacturer``/``Footprint`` properties back
+    out of the design's child sheets; does not re-run the binder or need the
+    catalog). Returns ``{"design_dir", "summary", "lines": [{"refs", "qty",
+    "value", "mpn", "manufacturer", "footprint"}, ...], "unbound": [ref, ...]}``.
+    """
+    from infersynth.bind.bom import build_bom
+
+    result = build_bom(design_dir)
+    return {
+        "design_dir": design_dir,
+        "summary": result.summary,
+        "lines": [
+            {
+                "refs": list(line.refs),
+                "qty": line.qty,
+                "value": line.value,
+                "mpn": line.mpn,
+                "manufacturer": line.manufacturer,
+                "footprint": line.footprint,
+            }
+            for line in result.lines
+        ],
+        "unbound": list(result.unbound),
+    }
+
+
+# --------------------------------------------------------------------------
+# pipeline
+# --------------------------------------------------------------------------
+
+
+def pipeline(
+    frd: str | None = None,
+    spec: str | None = None,
+    catalog_dir: str = "catalog",
+    out_dir: str = "build",
+    max_rounds: int = 3,
+) -> dict[str, Any]:
+    """Run the WP-F1 fixed-point pipeline driver (:func:`infersynth.pipeline.
+    run_pipeline`): match/decide rounds with gate-failure feedback + the
+    assisted-second-pass hint, converging to a materialized design.
+
+    Exactly one of *frd* or *spec* (a formal-spec YAML/JSON path whose
+    ``frd:`` key names the FRD) must be given — mirrors the ``infersynth
+    pipeline`` CLI's ``--frd``/``--spec`` contract. Returns the rounds
+    ledger, pending resolutions, and artifact paths::
+
+        {"converged", "all_decided", "rounds": [{"index", "excluded_before",
+         "winners", "undecided", "diagnostics", "gate_exclusions": [...],
+         "hints_applied": [...]}, ...],
+         "pending_resolutions": [{"id", "kind", "subject", "options",
+         "spec_edit"}, ...],
+         "resolutions_path", "excluded_cells",
+         "synthesis": {"root", "report", "trace"} | None}
+    """
+    if (frd is None) == (spec is None):
+        raise ValueError("pipeline: exactly one of 'frd' or 'spec' must be given")
+
+    from infersynth.pipeline import run_pipeline
+    from infersynth.spec import load_spec
+
+    loaded_spec = load_spec(spec) if spec is not None else None
+    frd_path = frd or (
+        str(loaded_spec.frd) if loaded_spec is not None and loaded_spec.frd else None
+    )
+    if not frd_path:
+        raise ValueError("pipeline: spec has no 'frd:' key and no 'frd' argument was given")
+
+    result = run_pipeline(
+        frd_path, catalog_dir, out_dir, spec=loaded_spec, max_rounds=max_rounds
+    )
+
+    return {
+        "converged": result.converged,
+        "all_decided": result.all_decided,
+        "rounds": [
+            {
+                "index": r.index,
+                "excluded_before": list(r.excluded_before),
+                "winners": {rid: list(cells) for rid, cells in r.winners.items()},
+                "undecided": dict(r.undecided),
+                "diagnostics": list(r.diagnostics),
+                "gate_exclusions": [
+                    {
+                        "cell_key": ge.cell_key,
+                        "requirement_id": ge.requirement_id,
+                        "reason": ge.reason,
+                    }
+                    for ge in r.gate_exclusions
+                ],
+                "hints_applied": [
+                    {
+                        "requirement_id": h.requirement_id,
+                        "added_libraries": list(h.added_libraries),
+                        "rule": h.rule,
+                        "spec_edit": h.spec_edit,
+                    }
+                    for h in r.hints_applied
+                ],
+            }
+            for r in result.rounds
+        ],
+        "pending_resolutions": [pr.to_dict() for pr in result.pending_resolutions],
+        "resolutions_path": str(result.resolutions_path) if result.resolutions_path else None,
+        "excluded_cells": list(result.excluded_cells),
+        "synthesis": (
+            {
+                "root": str(result.synthesis.root),
+                "report": str(result.synthesis.report_path),
+                "trace": str(result.synthesis.trace_path) if result.synthesis.trace_path else None,
+            }
+            if result.synthesis is not None
+            else None
+        ),
+    }
+
+
+# --------------------------------------------------------------------------
 # Not-yet-implemented tools (DESIGN.md section 9 names them; DESIGN.md
 # section 10 "Roadmap — Synth before Infer" says when they land).
 # --------------------------------------------------------------------------
@@ -374,6 +504,8 @@ TOOL_NAMES: tuple[str, ...] = (
     "bind_cell",
     "instantiate_cell",
     "run_gates",
+    "bom",
+    "pipeline",
     "elaborate_spec",
     "match_catalog",
     "synthesize",
