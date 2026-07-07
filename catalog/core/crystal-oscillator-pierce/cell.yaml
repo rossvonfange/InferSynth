@@ -1,0 +1,119 @@
+# Pierce crystal load network — round-4 catalog-breadth cell (timing domain).
+# Fragment authored via KiCAD-MCP-Server (add_schematic_component +
+# add_schematic_net_label with componentRef/pinNumber), same conventions as
+# the golden cells: hierarchical labels coincident with pin endpoints,
+# 1.27mm grid, ${IS.*} value slot.
+#
+# Topology: this is the PASSIVE load network half of a classic Pierce
+# oscillator only -- a real Pierce oscillator needs an inverter (inside an
+# MCU/oscillator IC) that this cell deliberately does not include (that
+# active element lives in whatever MCU cell instantiates this one alongside
+# it). Y1 (the crystal) sits between XIN and an internal YOUT node; C1 loads
+# XIN to GND; R1 is an optional series damping/limiting resistor between the
+# crystal's YOUT terminal and the XOUT port (0 ohms by default -- a plain
+# wire electrically, but present in the fragment per this batch's authoring
+# brief so a design that needs series damping has a place to put it without
+# a new cell); C2 loads XOUT (post-R1) to GND.
+manifest:
+  name: crystal-oscillator-pierce
+  version: "0.1.0"
+  description: Pierce crystal oscillator load network (crystal + load caps + optional series R); pairs with an external inverter (MCU/oscillator IC), not included here.
+  provenance: "classic Pierce oscillator load-network topology (generic crystal-oscillator app-note practice; re-expressed from scratch; verify against a specific crystal's datasheet)"
+  license: GPL-3.0-or-later
+  # A crystal + 2 load caps + 1 series resistor, no active silicon -> passive.
+  # (The missing inverter that would make this a complete oscillator is
+  # explicitly out of scope -- see the topology note above.)
+  technology: passive
+
+ports:
+  XIN: {direction: passive, kind: electrical}
+  XOUT: {direction: passive, kind: electrical}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - crystal oscillator
+    - crystal load network
+  # SELECTION.md sec 3: oscillators/delays/PWM/sequencing is "timing"
+  # verbatim -- a crystal is the timing reference even though (per the
+  # topology note) the active oscillator element lives elsewhere.
+  functions:
+    - timing
+  params:
+    # Structural spec parameter, NOT consumed by any binding (v0): no
+    # fragment ref's value derives from freq_hz -- the crystal U1's own
+    # Value/MPN is what actually carries the frequency (see selection.
+    # candidates below), and this idiom param exists purely so a design
+    # spec / FRD can *state* the required crystal frequency for extraction
+    # and downstream MPN selection to read, the same role SEED_PLAN gives
+    # non-binding structural params elsewhere in the catalog.
+    freq_hz:
+      type: float
+      range: [32768.0, 5.0e+7]
+      default: 8.0e+6
+    c_load_farads:
+      type: float
+      range: [5.0e-12, 3.0e-11]
+      default: 1.8e-11
+    r_series_ohms:
+      type: float
+      range: [0.0, 1.0e+4]
+      default: 0.0
+
+# c_load_farads binds directly to both load caps (v0 simplification,
+# documented honestly: a real Pierce design often derates the *board/pin*
+# stray capacitance from the crystal's specified load capacitance before
+# sizing C1/C2, and/or splits an asymmetric C1 != C2 pair for a specific
+# board layout -- this cell's v0 binding just ties both caps straight to the
+# idiom param, matching what the crystal's own datasheet load-capacitance
+# spec calls for at the component level). r_series_ohms binds R1 directly
+# (0 ohms is a legal expression value -- a plain zero-ohm "wire" placeholder
+# by default, non-zero when a specific crystal calls for series damping).
+bindings:
+  C1: {expr: "c_load_farads", format: capacitance}
+  C2: {expr: "c_load_farads", format: capacitance}
+  R1: "r_series_ohms"
+
+selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "ABM3-8.000MHZ-D2Y-T"
+      manufacturer: "Abracon"
+      footprint: "Crystal:Crystal_SMD_3215-2Pin_3.2x1.5mm"
+      maps: {Y1: true}
+      sourcing: {lcsc: C12674}
+    - mpn: "CL10C180JB8NNNC"
+      manufacturer: "Samsung"
+      footprint: "Capacitor_SMD:C_0603_1608Metric"
+      maps: {C1: true, C2: true}
+      sourcing: {lcsc: C1523}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true}
+      sourcing: {lcsc: C25804}
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:Crystal
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (1 crystal + 2 load caps + 1 series resistor at
+# typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.30, qty1k: 0.09}
+  area_mm2: 20
+  power_mw: 0
+  part_count: 4
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 1

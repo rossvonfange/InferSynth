@@ -1,0 +1,90 @@
+# LED status indicator — round-4 catalog-breadth cell (indication domain).
+# Fragment authored via KiCAD-MCP-Server (add_schematic_component +
+# add_schematic_net_label with componentRef/pinNumber, which snaps to the
+# real pin geometry), same conventions as the golden cells: hierarchical
+# labels coincident with pin endpoints, 1.27mm grid, ${IS.*} value slot.
+#
+# Topology: series resistor R1 from IN to the LED anode (internal ANODE
+# node); D1's cathode ties to GND. Classic current-limited LED indicator —
+# R1 sets the LED forward current from whatever IN sits at down to the
+# LED's forward-voltage drop.
+manifest:
+  name: led-indicator
+  version: "0.1.0"
+  description: Series-resistor current-limited LED status indicator.
+  provenance: "generic LED current-limiting practice, no external source"
+  license: GPL-3.0-or-later
+  # A discrete LED + resistor, no active silicon/IC -> analog-discrete
+  # (same reasoning as output-clamp's discrete Schottky diodes).
+  technology: analog-discrete
+
+ports:
+  IN: {direction: in, kind: electrical}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - led indicator
+    - status led
+  # SELECTION.md sec 3: indication is "human-visible/audible state" verbatim
+  # -- an LED status indicator is exactly that.
+  functions:
+    - indication
+  params:
+    i_led_amps:
+      type: float
+      range: [1.0e-4, 0.05]
+      default: 0.01
+    vin_volts:
+      type: float
+      range: [1.8, 24.0]
+      default: 5.0
+    vf_volts:
+      type: float
+      range: [1.6, 3.6]
+      default: 2.0
+
+# R1 = (vin_volts - vf_volts) / i_led_amps (Ohm's law across the series
+# resistor, the LED's forward drop pinning the ANODE node at vf_volts above
+# GND while lit). Sanity check at defaults: (5.0 - 2.0) / 0.01 = 300 ohms.
+bindings:
+  R1: "(vin_volts - vf_volts) / i_led_amps"
+
+selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "KP-2012SURCK"
+      manufacturer: "Kingbright"
+      footprint: "LED_SMD:LED_0805_2012Metric"
+      maps: {D1: true}
+      sourcing: {lcsc: C72043}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true}
+      sourcing: {lcsc: C25804}
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:LED
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (a single 0805 LED + 1 series resistor at typical
+# distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.08, qty1k: 0.02}
+  area_mm2: 8
+  power_mw: 50
+  part_count: 2
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

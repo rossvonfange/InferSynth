@@ -366,6 +366,7 @@ class TestCellInterfacesValidation:
             "core/conn-sensor-4wire@0.1.0": ["sense"],
             "core/bridge-interface@0.1.0": ["filtered_out", "sense_in"],
             "core/instrumentation-amp-3opamp@0.1.0": ["diff_in"],
+            "core/i2c-pullups@0.1.0": ["bus"],
         }
 
 

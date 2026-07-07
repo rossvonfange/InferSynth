@@ -236,6 +236,10 @@ class TestSchemaV1GoldenCells:
             "core/bridge-interface@0.1.0",
             "core/rail-splitter-virtual-gnd@0.1.0",
             "core/input-protection-rfi@0.1.0",
+            "core/timer-555-astable@0.1.0",
+            "core/led-indicator@0.1.0",
+            "core/i2c-pullups@0.1.0",
+            "core/crystal-oscillator-pierce@0.1.0",
         }
         assert all(c.library == "core" for c in catalog.cells.values())
 
