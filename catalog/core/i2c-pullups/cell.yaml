@@ -1,0 +1,100 @@
+# I2C bus pull-up pair — round-4 catalog-breadth cell (interface domain; the
+# catalog's first cell to claim an ``interfaces:`` group, exercising that
+# machinery for the first time). Fragment authored via KiCAD-MCP-Server
+# (add_schematic_component + add_schematic_net_label with
+# componentRef/pinNumber), same conventions as the golden cells:
+# hierarchical labels coincident with pin endpoints, 1.27mm grid, ${IS.*}
+# value slot.
+#
+# Topology: R1 from VCC to SDA, R2 from VCC to SCL — the classic open-drain
+# I2C bus termination pair (every I2C bus needs exactly one of these
+# somewhere, regardless of how many peripherals/controllers hang off it).
+manifest:
+  name: i2c-pullups
+  version: "0.1.0"
+  description: I2C bus pull-up resistor pair (SDA/SCL to VCC).
+  provenance: "generic I2C bus termination practice (I2C-bus specification UM10204), no external source"
+  license: GPL-3.0-or-later
+  # Two resistors, no active silicon -> passive.
+  technology: passive
+
+ports:
+  SDA: {direction: passive, kind: electrical}
+  SCL: {direction: passive, kind: electrical}
+  VCC: {direction: in, kind: power}
+
+# Interface claim (NETFLOW.md "Interfaces (bundles)"; catalog/interfaces.yaml
+# defines ``i2c`` with roles SDA {dir: bidir} and SCL {dir: out}, neither
+# with a declared ``kind``). Checked against
+# ``infersynth/catalog/interfaces.py::validate_cell_interfaces`` before
+# claiming this: that validator (a) never compares a cell ports's
+# ``direction`` against the interface role's ``dir`` at all -- there is no
+# such check anywhere in the function; the only geometry it enforces is
+# port-existence + one-group-per-port; (b) only compares ``kind`` when the
+# role declares one AND that kind falls in the port-kind vocabulary
+# (electrical/power/digital) -- i2c's roles declare no ``kind``, so that
+# check never fires either. A ``direction: passive`` SDA/SCL pair mapped to
+# i2c's ``bidir``/``out`` roles therefore validates cleanly; nothing in the
+# machinery rejects it. Role chosen: ``peripheral`` -- a pull-up pair is a
+# bus-terminator, not a bus controller; it doesn't drive SCL the way an I2C
+# controller/initiator would, it just passively holds both lines high
+# between drives. (v0 note: since the validator does not check dir/kind
+# compatibility, this claim is honest about being unenforced by the
+# machinery today, not proof that "peripheral" is the only defensible role
+# for a passive pull-up pair -- it is simply the more accurate one.)
+interfaces:
+  bus:
+    type: i2c
+    role: peripheral
+    map: {SDA: SDA, SCL: SCL}
+
+idioms:
+  keywords:
+    - i2c pullups
+    - i2c bus termination
+  # SELECTION.md sec 3: comms buses and transceivers is "interface" verbatim.
+  functions:
+    - interface
+  params:
+    r_pullup_ohms:
+      type: float
+      range: [1000.0, 10000.0]
+      default: 4700.0
+
+bindings:
+  R1: "r_pullup_ohms"
+  R2: "r_pullup_ohms"
+
+selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true, R2: true}
+      sourcing: {lcsc: C25804}
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Device:R
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (2 generic 0603 resistors at typical distributor
+# pricing), not a sourced real BOM; dev_hours is 0 (no firmware/config
+# engineering).
+costs:
+  bom: {qty1: 0.05, qty1k: 0.012}
+  area_mm2: 6
+  power_mw: 0
+  part_count: 2
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0

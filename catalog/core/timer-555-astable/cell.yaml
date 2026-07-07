@@ -1,0 +1,113 @@
+# 555 astable oscillator — round-4 catalog-breadth cell (timing domain, first
+# of the four; also the concrete cell the project's PIC-vs-555 absorption
+# story needs). Fragment authored via KiCAD-MCP-Server (add_schematic_component
+# + add_schematic_net_label with componentRef/pinNumber, which snaps to the
+# real pin geometry rather than a hand-computed one), same conventions as the
+# golden cells: hierarchical labels coincident with pin endpoints, 1.27mm
+# grid, ${IS.*} value slot.
+#
+# Topology (classic 555 astable, AoE-style): RA from VCC to DISCH (pin 7); RB
+# from DISCH to THRES (pin 6); THRES wired to TRIG (pin 2) — same node, so the
+# threshold/trigger comparators share one RC timing node; C1 from that THR
+# node to GND sets the timing capacitor; C2 (fixed 10 nF, not an idiom param
+# — the classic CONT-pin bypass cap, datasheet-recommended value, not part of
+# the timing math) from CONT (pin 5) to GND; RESET (pin 4) tied to VCC
+# (disables the reset function). OUT (pin 3) is the only cell output.
+manifest:
+  name: timer-555-astable
+  version: "0.1.0"
+  description: Classic 555 astable square-wave oscillator (NE555P + RC timing network).
+  provenance: "classic 555 astable topology (TI/Fairchild application notes; re-expressed from scratch; verify against datasheet)"
+  license: GPL-3.0-or-later
+  # An NE555-class timer IC plus its RC timing network; the IC drives the
+  # technology classification, same reasoning as vref-shunt's TL431.
+  technology: analog-ic
+
+ports:
+  OUT: {direction: out, kind: electrical}
+  VCC: {direction: in, kind: power}
+  GND: {direction: in, kind: power}
+
+idioms:
+  keywords:
+    - astable timer
+    - square wave oscillator
+  # SELECTION.md sec 3: oscillators/delays/PWM/sequencing is "timing" verbatim.
+  functions:
+    - timing
+  params:
+    freq_hz:
+      type: float
+      range: [0.1, 100000.0]
+      default: 1000.0
+    duty:
+      type: float
+      range: [0.55, 0.95]
+      default: 0.6
+    c_farads:
+      type: float
+      range: [1.0e-9, 1.0e-3]
+      default: 1.0e-7
+
+# Astable timing (datasheet): f = 1.44 / ((RA + 2*RB) * C), duty = (RA+RB) /
+# (RA+2*RB). Solving the pair for RA, RB in terms of (freq_hz, duty, c_farads):
+#
+#   RA + 2*RB = 1.44 / (f*C)                                  ... (1) from f
+#   RA + RB   = duty * (RA + 2*RB) = duty * 1.44/(f*C)         ... (2) from duty
+#   (1)-(2):  RB = 1.44/(f*C) - duty*1.44/(f*C) = 1.44*(1-duty)/(f*C)
+#   sub back: RA = 1.44/(f*C) - 2*RB = 1.44*(2*duty-1)/(f*C)
+#
+# duty > 0.5 (idiom range starts at 0.55) is exactly what keeps RA positive
+# (2*duty-1 > 0); RB > 0 for any duty < 1 (range tops out at 0.95). Sanity
+# check at defaults (freq_hz=1000, duty=0.6, c_farads=1e-7): RB = 1.44*0.4 /
+# (1000*1e-7) = 5760 ohms; RA = 1.44*0.2/(1000*1e-7) = 2880 ohms. Check:
+# RA+2*RB = 14400, f = 1.44/(14400*1e-7) = 1000 Hz (matches); duty =
+# (2880+5760)/14400 = 0.6 (matches).
+bindings:
+  R1: "1.44*(2*duty-1)/(freq_hz*c_farads)"
+  R2: "1.44*(1-duty)/(freq_hz*c_farads)"
+  C1: {expr: "c_farads", format: capacitance}
+
+selection:
+  # SEED BINDINGS (plausible-but-unreviewed): real, orderable MPNs paired
+  # with sensible KiCad stock footprints (SEED_PLAN acceptance criterion 4).
+  # Engineer-nod level, NOT a sourced/reviewed BOM. Every fragment ref is
+  # covered by exactly one candidate; value-parametric refs share one.
+  candidates:
+    - mpn: "NE555P"
+      manufacturer: "Texas Instruments"
+      footprint: "Package_DIP:DIP-8_W7.62mm"
+      maps: {U1: true}
+      sourcing: {lcsc: C7331}
+    - mpn: "RC0603FR-0710KL"
+      manufacturer: "Yageo"
+      footprint: "Resistor_SMD:R_0603_1608Metric"
+      maps: {R1: true, R2: true}
+      sourcing: {lcsc: C25804}
+    - mpn: "CL10B104KB8NNNC"
+      manufacturer: "Samsung"
+      footprint: "Capacitor_SMD:C_0603_1608Metric"
+      maps: {C1: true, C2: true}
+      sourcing: {lcsc: C14663}
+  # Freeform stub per DESIGN.md section 5 — v2 scoring engine input.
+  archetype_symbol: Timer:NE555P
+  qualification: null
+
+verification:
+  golden_netlist: golden_netlist.txt
+
+depth:
+  level: L0
+
+# SELECTION.md sec 6: starter cost vector. BOM figures are rough, plausible
+# placeholder estimates (an NE555-class timer + 2 resistors + 2 capacitors at
+# typical distributor pricing), not a sourced real BOM; dev_hours is 0 (no
+# firmware/config engineering).
+costs:
+  bom: {qty1: 0.35, qty1k: 0.11}
+  area_mm2: 40
+  power_mw: 30
+  part_count: 5
+  dev_hours: 0
+  production_steps: []
+  sourcing_risk: 0
