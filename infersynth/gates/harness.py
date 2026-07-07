@@ -112,7 +112,12 @@ def generate_harness(
     design_dir = Path(design_dir)
     params = harness_params(cell)
     root = emit.new_design(design_dir, "harness")
-    emit.instantiate(cell, params, instname, design_dir, root)
+    # renumber_refs=False: the golden-netlist gate compares this harness's
+    # exported partition against the cell's committed golden_netlist.txt,
+    # which is keyed on the fragment's own bare refs (U1, R1, ...). The
+    # design-level per-instance renumbering (WP3 instantiate default) must
+    # not apply here — this is a per-cell gate, not a multi-instance design.
+    emit.instantiate(cell, params, instname, design_dir, root, renumber_refs=False)
 
     text = root.read_text()
 
@@ -121,20 +126,24 @@ def generate_harness(
         raise HarnessError("emitted root has no empty (lib_symbols) to populate")
     text = text.replace("\t(lib_symbols)", f"\t(lib_symbols\n{_PWR_FLAG_LIB}\n\t)", 1)
 
-    # locate the single (sheet ...) block's origin.
-    m = re.search(r"\(sheet\n\t\t\(at ([\d.]+) ([\d.]+)\)", text)
+    # locate the single (sheet ...) block's origin + current size (the
+    # emitter already sizes it for the cell's full port count up front, so
+    # the enlargement below is normally a no-op — defensive fallback only).
+    m = re.search(r"\(sheet\n\t\t\(at ([\d.]+) ([\d.]+)\)\n\t\t\(size ([\d.]+) ([\d.]+)\)", text)
     if m is None:  # pragma: no cover - emitter always writes one sheet
         raise HarnessError("emitted root has no (sheet ...) block to wrap")
     sx, sy = float(m.group(1)), float(m.group(2))
+    cur_w, cur_h = float(m.group(3)), float(m.group(4))
 
     # 2. enlarge the sheet box so all pins fit on its left border.
     nports = len(cell.ports)
-    sheet_h = max(emit._SHEET_H, (nports + 1) * _PIN_STRIDE)
-    text = text.replace(
-        f"(size {emit._SHEET_W:g} {emit._SHEET_H:g})",
-        f"(size {emit._SHEET_W:g} {sheet_h:g})",
-        1,
-    )
+    sheet_h = max(cur_h, (nports + 1) * _PIN_STRIDE)
+    if sheet_h != cur_h:
+        text = (
+            text[: m.start()]
+            + f"(sheet\n\t\t(at {sx:g} {sy:g})\n\t\t(size {cur_w:g} {sheet_h:g})"
+            + text[m.end() :]
+        )
 
     # 3. build sheet pins + parent-side labels + power/in drivers.
     pins: list[str] = []

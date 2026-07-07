@@ -140,6 +140,155 @@ def test_byte_preserving_structure(tmp_path: Path) -> None:
 _KICAD_CLI = shutil.which("kicad-cli")
 
 
+# --------------------------------------------------------------------------
+# Grid layout (round-2 cosmetics): many-sheet designs wrap instead of running
+# off the A4 page in one endless row.
+# --------------------------------------------------------------------------
+
+
+def test_grid_layout_wraps_and_stays_in_frame(tmp_path: Path) -> None:
+    root = emit.new_design(tmp_path, "demo")
+    cell = load_cell(CELL1)
+    for i in range(12):
+        emit.instantiate(cell, {"gain": 100}, f"inst_{i}", tmp_path, root)
+
+    boxes = emit._existing_sheet_boxes(root.read_text())
+    assert len(boxes) == 12
+
+    # wraps: not every sheet lands on the same row (the old one-row layout).
+    ys = {y for _, y, _, _ in boxes}
+    assert len(ys) > 1
+
+    # in-frame: no sheet's right edge crosses the A4 usable-width budget.
+    page_right = emit._SHEET_ORIGIN_X + emit._PAGE_USABLE_W
+    for x, _, w, _ in boxes:
+        assert x + w <= page_right + 1e-6
+
+    # no two boxes overlap.
+    def _overlap(a, b) -> bool:
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1 :]:
+            assert not _overlap(a, b), f"{a} overlaps {b}"
+
+
+def test_sheet_size_grows_with_instname_and_port_count(tmp_path: Path) -> None:
+    root = emit.new_design(tmp_path, "demo")
+    cell1 = load_cell(CELL1)
+    cell2 = load_cell(CELL2)
+    emit.instantiate(cell1, {"gain": 100}, "a_very_long_instance_name_indeed", tmp_path, root)
+    emit.instantiate(
+        cell2,
+        {"gain1": 10, "gain2": 10, "gain3": 10, "gain4": 10, "channels": 4},
+        "q",
+        tmp_path,
+        root,
+    )
+    boxes = emit._existing_sheet_boxes(root.read_text())
+    long_name_box, many_ports_box = boxes
+    # the long-instname sheet is wider than the floor size.
+    assert long_name_box[2] > emit._SHEET_W
+    # the many-port cell's sheet is taller than the floor size.
+    assert many_ports_box[3] > emit._SHEET_H
+    # positions and sizes stay on the 1.27 mm grid.
+    for x, y, w, h in boxes:
+        for v in (x, y, w, h):
+            assert abs(v / emit._GRID - round(v / emit._GRID)) < 1e-6
+
+
+# --------------------------------------------------------------------------
+# Refdes re-annotation (round-2 cosmetics): each instance's copied fragment
+# gets a per-instance refdes namespace so a multi-sheet design never stacks
+# the same U1/R1/C1 across every child.
+# --------------------------------------------------------------------------
+
+
+def test_renumber_refs_offsets_prefixed_digits() -> None:
+    assert emit._bump_ref("U1", 100) == "U101"
+    assert emit._bump_ref("R2", 200) == "R202"
+    assert emit._bump_ref("C10", 300) == "C310"
+
+
+def test_renumber_refs_excludes_virtual_refs() -> None:
+    assert emit._bump_ref("#FLG01", 100) == "#FLG01"
+    assert emit._bump_ref("#PWR01", 500) == "#PWR01"
+
+
+def test_instantiate_renumbers_refs_per_instance(tmp_path: Path) -> None:
+    root, p1, p2 = _instantiate_both(tmp_path)
+    t1, t2 = p1.read_text(), p2.read_text()
+    # instance 1 (offset +100): U1 -> U101, R1 -> R101, R2 -> R102.
+    assert '"U101"' in t1
+    assert '"R101"' in t1
+    assert '"R102"' in t1
+    ref_props_t1 = re.findall(r'\(property "Reference" "([^"]+)"', t1)
+    assert "U1" not in ref_props_t1
+    assert "R1" not in ref_props_t1
+    assert "R2" not in ref_props_t1
+    # instance 2 (offset +200): its own U1 -> U201.
+    assert '"U201"' in t2
+    # (reference "...") inside (instances ...) is rewritten identically.
+    assert '(reference "U101")' in t1
+    assert '(reference "U201")' in t2
+
+
+def test_renumber_refs_leaves_lib_symbols_untouched(tmp_path: Path) -> None:
+    _, p1, _ = _instantiate_both(tmp_path)
+    child = p1.read_text()
+    frag = (CELL1 / "fragment.kicad_sch").read_text()
+    frag_lib = frag[frag.index("(lib_symbols") : frag.index("\t(symbol\n\t\t(lib_id")]
+    # the lib_symbols block (bare "R"/"U" default-reference properties) is
+    # copied verbatim — renumbering never touches it.
+    assert frag_lib in child
+
+
+def test_instantiate_renumber_refs_false_preserves_bare_refs(tmp_path: Path) -> None:
+    # The WP4 cell-CI harness path: refs must stay exactly as the fragment
+    # wrote them (golden_netlist.txt is keyed on those bare refs).
+    root = emit.new_design(tmp_path, "demo")
+    cell = load_cell(CELL1)
+    p1 = emit.instantiate(cell, {"gain": 100}, "dut", tmp_path, root, renumber_refs=False)
+    t1 = p1.read_text()
+    assert '"U1"' in t1
+    assert '"R1"' in t1
+    assert '"R2"' in t1
+    assert '(reference "U1")' in t1
+
+
+@pytest.mark.kicad
+@pytest.mark.skipif(_KICAD_CLI is None, reason="kicad-cli not on PATH")
+def test_netlist_export_has_no_annotation_warning(tmp_path: Path) -> None:
+    # Round-2 acceptance: with per-instance refdes renumbering, a multi-sheet
+    # design no longer stacks the same U1/R1 on every child, so kicad-cli's
+    # netlist export must not warn "schematic has annotation errors".
+    root = emit.new_design(tmp_path, "demo")
+    cell = load_cell(CELL1)
+    for i in range(3):
+        emit.instantiate(cell, {"gain": 100}, f"inst_{i}", tmp_path, root)
+    proc = subprocess.run(
+        [
+            _KICAD_CLI,
+            "sch",
+            "export",
+            "netlist",
+            "--format",
+            "kicadxml",
+            "-o",
+            str(tmp_path / "netlist.xml"),
+            str(root),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
+    assert "annotation" not in combined.lower(), combined
+
+
 @pytest.mark.kicad
 @pytest.mark.skipif(_KICAD_CLI is None, reason="kicad-cli not on PATH")
 def test_kicad_cli_parses_emitted_hierarchy(tmp_path: Path) -> None:

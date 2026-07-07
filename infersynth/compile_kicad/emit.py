@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from infersynth.bind import bind_cell
+from infersynth.compile_kicad.wiring_text import PIN_STRIDE
 
 if TYPE_CHECKING:
     from infersynth.catalog.loader import CellPackage
@@ -60,13 +61,130 @@ _UUID_RE = re.compile(
 _GRID = 1.27
 _SHEET_ORIGIN_X = 25.4  # 20 * 1.27
 _SHEET_ORIGIN_Y = 25.4
-_SHEET_STRIDE_X = 38.1  # 30 * 1.27 — sheets laid left-to-right, one row
-_SHEET_W = 25.4
+_SHEET_W = 25.4  # floor width/height — grown per-instance, never shrunk below this
 _SHEET_H = 25.4
+
+# Grid layout (round-2 cosmetics): sheets wrap into rows instead of running off
+# the A4 page in one endless line. ~250 mm is the usable width of an A4 sheet
+# (297 mm landscape minus title-block/margins); row gap mirrors the old
+# left-to-right stride's 12.7 mm (10 * 1.27) gap between boxes.
+_PAGE_USABLE_W = 250.0
+_ROW_GAP_X = 12.7
+_ROW_GAP_Y = 12.7
+
+# Rough per-character width for sizing a sheet box to its Sheetname/Sheetfile
+# label (KiCad default 1.27 mm font): one grid step per character is generous
+# enough that the label never overruns the box, and stays grid-aligned for free.
+_CHAR_W = _GRID
+_LABEL_PAD_CHARS = 2
+
+_SHEET_RE = re.compile(r"\t\(sheet\n(.*?)\n\t\)\n", re.DOTALL)
+_BOX_AT_RE = re.compile(r"\(at ([-\d.]+) ([-\d.]+)\)")
+_BOX_SIZE_RE = re.compile(r"\(size ([-\d.]+) ([-\d.]+)\)")
+
+# Refdes text surgery (round-2 cosmetics): a copied fragment's refs are
+# rewritten per-instance so a multi-sheet design doesn't stack the same
+# U1/R1/C1 across every child (kicad-cli's design-wide annotation check).
+# #FLG / #PWR (and any other KiCad virtual ref) are left untouched.
+_REF_PROP_RE = re.compile(r'(\(property "Reference" ")([^"]*)(")')
+_REF_INST_RE = re.compile(r'(\(reference ")([^"]*)(")')
+_REF_SPLIT_RE = re.compile(r"^([A-Za-z_]+)(\d+)$")
+# Marker of the first per-instance component symbol: "(lib_id" appears ONLY
+# in instance symbols (lib_symbols entries open as (symbol "Lib:Name" ...)),
+# and every instance's Reference property / (reference ...) comes after its
+# own (lib_id ...). Splitting at the first occurrence therefore protects the
+# whole (lib_symbols ...) block — for both the pretty multi-line and the
+# compact one-line fragment formats.
+_FIRST_INSTANCE_SYMBOL = "(lib_id"
 
 
 def _new_uuid() -> str:
     return str(uuid.uuid4())
+
+
+def _grid_snap(value: float) -> float:
+    """Round *value* to the nearest on-grid coordinate."""
+    return round(round(value / _GRID) * _GRID, 4)
+
+
+def _sheet_size(instname: str, nports: int) -> tuple[float, float]:
+    """Sheet box (w, h) sized for *instname*'s labels and *nports* pins.
+
+    Width fits the longer of the two auto-placed labels (``Sheetfile`` is
+    always the longer one: ``instname`` + ``.kicad_sch``). Height is sized for
+    the FULL port count up front — before any wiring-stage pin splicing — so
+    the post-wiring enlargement in :mod:`wiring`/:mod:`harness` is a no-op and
+    a sheet never grows into the row below it.
+    """
+    label = f"{instname}.kicad_sch"
+    w = max(_SHEET_W, _grid_snap((len(label) + _LABEL_PAD_CHARS) * _CHAR_W))
+    h = max(_SHEET_H, _grid_snap((nports + 1) * PIN_STRIDE))
+    return w, h
+
+
+def _existing_sheet_boxes(parent_text: str) -> list[tuple[float, float, float, float]]:
+    """Every already-placed child sheet's ``(x, y, w, h)`` box, in file order."""
+    boxes = []
+    for m in _SHEET_RE.finditer(parent_text):
+        body = m.group(1)
+        am = _BOX_AT_RE.search(body)
+        sm = _BOX_SIZE_RE.search(body)
+        if am and sm:
+            boxes.append(
+                (float(am.group(1)), float(am.group(2)), float(sm.group(1)), float(sm.group(2)))
+            )
+    return boxes
+
+
+def _next_sheet_position(parent_text: str, w: float, h: float) -> tuple[float, float]:
+    """Next on-grid ``(x, y)`` for a *w* x *h* sheet: wrap into a new row when
+
+    it would not fit within ``_PAGE_USABLE_W`` of the current row. Row height
+    is the tallest sheet placed in that row so far (sheets vary in height
+    after port-count sizing).
+    """
+    boxes = _existing_sheet_boxes(parent_text)
+    if not boxes:
+        return _SHEET_ORIGIN_X, _SHEET_ORIGIN_Y
+
+    max_y = max(b[1] for b in boxes)
+    row = [b for b in boxes if b[1] == max_y]
+    row_right = max(b[0] + b[2] for b in row)
+    row_h = max(b[3] for b in row)
+
+    cand_x = _grid_snap(row_right + _ROW_GAP_X)
+    if cand_x + w <= _SHEET_ORIGIN_X + _PAGE_USABLE_W:
+        return cand_x, max_y
+    new_y = _grid_snap(max_y + row_h + _ROW_GAP_Y)
+    return _SHEET_ORIGIN_X, new_y
+
+
+def _bump_ref(ref: str, offset: int) -> str:
+    """Offset a refdes's numeric suffix; virtual (``#``-prefixed) refs pass through."""
+    if ref.startswith("#"):
+        return ref
+    m = _REF_SPLIT_RE.match(ref)
+    if not m:
+        return ref  # not a plain PREFIX+digits ref — leave it alone
+    prefix, digits = m.groups()
+    return f"{prefix}{int(digits) + offset}"
+
+
+def _renumber_refs(text: str, offset: int) -> str:
+    """Rewrite every non-virtual refdes in the copied fragment's instance
+
+    symbols by *offset* — both the ``(property "Reference" ...)`` field and
+    the matching ``(reference ...)`` inside its ``(instances ...)`` block.
+    Never touches ``(lib_symbols ...)`` (everything before the first
+    per-instance component symbol).
+    """
+    idx = text.find(_FIRST_INSTANCE_SYMBOL)
+    if idx == -1:
+        return text  # fragment has no discrete component symbols
+    head, tail = text[:idx], text[idx:]
+    tail = _REF_PROP_RE.sub(lambda m: m.group(1) + _bump_ref(m.group(2), offset) + m.group(3), tail)
+    tail = _REF_INST_RE.sub(lambda m: m.group(1) + _bump_ref(m.group(2), offset) + m.group(3), tail)
+    return head + tail
 
 
 def format_value(ohms: float) -> str:
@@ -171,7 +289,10 @@ def _sheet_block(
     instname: str,
     cell: CellPackage,
     resolved: dict[str, object],
-    index: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
     page: int,
     sheet_uuid: str,
     parent_root: str,
@@ -179,14 +300,14 @@ def _sheet_block(
 ) -> str:
     """Build the ``(sheet ...)`` block spliced into the parent schematic.
 
-    ``index`` positions the sheet on-grid (one left-to-right row); ``page`` is
-    its ordinal in ``(sheet_instances)``. Carries Sheetname/Sheetfile plus the
+    ``(x, y)`` / ``(w, h)`` are the sheet's on-grid position and size (grid
+    wrapping + label/port sizing are the caller's job — see
+    :func:`_next_sheet_position` / :func:`_sheet_size`); ``page`` is its
+    ordinal in ``(sheet_instances)``. Carries Sheetname/Sheetfile plus the
     hidden ``IS.Cell`` / ``IS.Version`` / ``IS.Param.*`` provenance stamps.
     """
-    x = _SHEET_ORIGIN_X + _SHEET_STRIDE_X * index
-    y = _SHEET_ORIGIN_Y
     name_y = y - 0.7116  # KiCad's Sheetname anchor: just above the box, bottom-justified
-    file_y = y + _SHEET_H + 0.5846  # Sheetfile anchor: just below the box, top-justified
+    file_y = y + h + 0.5846  # Sheetfile anchor: just below the box, top-justified
 
     props = [
         f'\t\t(property "Sheetname" "{instname}"\n'
@@ -212,7 +333,7 @@ def _sheet_block(
     return (
         "\t(sheet\n"
         f"\t\t(at {x:g} {y:g})\n"
-        f"\t\t(size {_SHEET_W:g} {_SHEET_H:g})\n"
+        f"\t\t(size {w:g} {h:g})\n"
         "\t\t(exclude_from_sim no)\n"
         "\t\t(in_bom yes)\n"
         "\t\t(on_board yes)\n"
@@ -292,6 +413,8 @@ def instantiate(
     instname: str,
     design_dir: Path,
     parent_sch: Path,
+    *,
+    renumber_refs: bool = True,
 ) -> Path:
     """Instantiate *cell* (bound with *params*) as ``<instname>`` under *parent_sch*.
 
@@ -300,6 +423,13 @@ def instantiate(
     ``<design_dir>/<instname>.kicad_sch``, and splices a provenance-stamped
     ``(sheet ...)`` reference + ``(sheet_instances)`` page into *parent_sch*.
     Returns the child schematic path.
+
+    ``renumber_refs`` (default ``True``): offset the copied fragment's refdes
+    by ``instance_index * 100`` (instance 1 -> +100, instance 2 -> +200, ...;
+    ``#``-prefixed virtual refs untouched) so a multi-sheet design never
+    stacks the same U1/R1/C1 across every child. Callers that need the
+    fragment's own bare refs preserved (the WP4 cell-CI harness, checked
+    against a golden netlist keyed on those bare refs) pass ``False``.
     """
     design_dir = Path(design_dir)
     parent_sch = Path(parent_sch)
@@ -340,19 +470,32 @@ def instantiate(
         f'(path "/{parent_root}/{sheet_uuid}"',
     )
 
+    # 4b. per-instance refdes namespace: instance k (1-based, in
+    #     instantiation order) offsets its refs by k*100.
+    index = parent_text.count("\n\t(sheet\n")  # existing child sheets (root is not one)
+    if renumber_refs:
+        text = _renumber_refs(text, (index + 1) * 100)
+
     # 5. write the child schematic.
     design_dir.mkdir(parents=True, exist_ok=True)
     child_path = design_dir / f"{instname}.kicad_sch"
     child_path.write_text(text)
 
-    # 6. splice the (sheet ...) block + page into the parent.
-    index = parent_text.count("\n\t(sheet\n")  # existing child sheets (root is not one)
+    # 6. splice the (sheet ...) block + page into the parent. Grid layout:
+    #    wrap into a new row instead of running one endless row off the page;
+    #    size the box up front for the instname label and the FULL port count
+    #    (before wiring's pin splicing) so later enlargement is a no-op.
     page = index + 2  # root is page 1; child sheets are pages 2, 3, ...
+    w, h = _sheet_size(instname, len(cell.ports))
+    x, y = _next_sheet_position(parent_text, w, h)
     sheet_block = _sheet_block(
         instname=instname,
         cell=cell,
         resolved=resolved,
-        index=index,
+        x=x,
+        y=y,
+        w=w,
+        h=h,
         page=page,
         sheet_uuid=sheet_uuid,
         parent_root=parent_root,

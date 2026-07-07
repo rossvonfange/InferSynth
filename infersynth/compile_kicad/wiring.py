@@ -38,7 +38,7 @@ __all__ = ["emit_wiring"]
 _SHEET_RE = re.compile(r"\t\(sheet\n.*?\n\t\)\n", re.DOTALL)
 _SHEETNAME_RE = re.compile(r'\(property "Sheetname" "([^"]*)"')
 _AT_RE = re.compile(r"\(at ([\d.]+) ([\d.]+)\)")
-_SIZE_RE = re.compile(rf"\(size {emit._SHEET_W:g} {emit._SHEET_H:g}\)")
+_SIZE_RE = re.compile(r"\(size ([\d.]+) ([\d.]+)\)")
 
 
 def emit_wiring(root: Path, plan: WiringPlan, instances, catalog: Catalog) -> None:
@@ -97,9 +97,16 @@ def emit_wiring(root: Path, plan: WiringPlan, instances, catalog: Catalog) -> No
             return block
         sx, sy = float(at_m.group(1)), float(at_m.group(2))
 
-        # enlarge the sheet box so all pins fit on its left border.
-        sheet_h = max(emit._SHEET_H, (len(wired) + 1) * PIN_STRIDE)
-        block = _SIZE_RE.sub(f"(size {emit._SHEET_W:g} {sheet_h:g})", block, count=1)
+        # enlarge the sheet box so all pins fit on its left border. The
+        # emitter already sizes the box for the cell's FULL port count up
+        # front (round-2 layout), so this is normally a no-op — it only
+        # fires as a defensive fallback if a sheet was ever under-sized.
+        size_m = _SIZE_RE.search(block)
+        cur_w = float(size_m.group(1)) if size_m else emit._SHEET_W
+        cur_h = float(size_m.group(2)) if size_m else emit._SHEET_H
+        sheet_h = max(cur_h, (len(wired) + 1) * PIN_STRIDE)
+        if size_m is not None and sheet_h != cur_h:
+            block = _SIZE_RE.sub(f"(size {cur_w:g} {sheet_h:g})", block, count=1)
 
         pins: list[str] = []
         y = sy + PIN_STRIDE
