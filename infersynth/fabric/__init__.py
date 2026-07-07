@@ -31,7 +31,9 @@ from infersynth.fabric.loader import (
     FabricError,
     Site,
     TieOff,
+    derive_ref_map,
     load_fabric,
+    prefix_num,
 )
 from infersynth.fabric.stuff import StuffResult, stuff
 
@@ -41,6 +43,8 @@ __all__ = [
     "Site",
     "TieOff",
     "load_fabric",
+    "derive_ref_map",
+    "prefix_num",
     "FitResult",
     "StuffValue",
     "StuffedSite",

@@ -182,6 +182,18 @@ class TestLoader:
             load_fabric(tmp_path / "fabric.yaml", catalog, require_board=False)
         assert any("does-not-exist" in d for d in exc.value.diagnostics)
 
+    def test_prefix_num_is_public(self) -> None:
+        # promoted from the underscore-private _prefix_num a producer had to reach for.
+        from infersynth.fabric import prefix_num as pn_pkg
+        from infersynth.fabric.loader import _prefix_num, prefix_num
+
+        assert prefix_num("R101") == ("R", 101)
+        assert prefix_num("U7") == ("U", 7)
+        assert prefix_num("TP") == ("TP", 0)
+        # thin private alias preserved for backward compatibility
+        assert _prefix_num is prefix_num
+        assert pn_pkg is prefix_num
+
 
 # --------------------------------------------------------------------------
 # deliverable 2: fit engine

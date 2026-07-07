@@ -37,7 +37,15 @@ import yaml
 
 from infersynth.catalog import Catalog, CatalogError
 
-__all__ = ["Fabric", "Site", "TieOff", "FabricError", "load_fabric"]
+__all__ = [
+    "Fabric",
+    "Site",
+    "TieOff",
+    "FabricError",
+    "load_fabric",
+    "derive_ref_map",
+    "prefix_num",
+]
 
 #: unstuffed-site inertness policies (FABRIC.md); v0 ships ``dnp-all`` only.
 TIE_OFF_POLICIES = ("dnp-all",)
@@ -111,14 +119,23 @@ class Fabric:
         return {s.id: s for s in self.sites}
 
 
-def _prefix_num(ref: str) -> tuple[str, int]:
-    """Split a refdes into ``(alpha-prefix, numeric-suffix)`` (``R101`` -> ``("R", 101)``)."""
+def prefix_num(ref: str) -> tuple[str, int]:
+    """Split a refdes into ``(alpha-prefix, numeric-suffix)`` (``R101`` -> ``("R", 101)``).
+
+    Producer-facing (a fabric *producer* such as Loom groups fragment refs by
+    prefix to lay out board refdes centuries); public alongside
+    :func:`derive_ref_map`, which recovers the fragment→board mapping.
+    """
     i = len(ref)
     while i > 0 and ref[i - 1].isdigit():
         i -= 1
     prefix = ref[:i]
     suffix = ref[i:]
     return prefix, (int(suffix) if suffix.isdigit() else 0)
+
+
+#: Backward-compatible private alias (pre-promotion name). Prefer :func:`prefix_num`.
+_prefix_num = prefix_num
 
 
 def derive_ref_map(fragment_refs: list[str], board_refs: list[str]) -> dict[str, str]:
@@ -133,14 +150,14 @@ def derive_ref_map(fragment_refs: list[str], board_refs: list[str]) -> dict[str,
     """
     by_prefix_frag: dict[str, list[str]] = {}
     for r in fragment_refs:
-        by_prefix_frag.setdefault(_prefix_num(r)[0], []).append(r)
+        by_prefix_frag.setdefault(prefix_num(r)[0], []).append(r)
     by_prefix_board: dict[str, list[str]] = {}
     for r in board_refs:
-        by_prefix_board.setdefault(_prefix_num(r)[0], []).append(r)
+        by_prefix_board.setdefault(prefix_num(r)[0], []).append(r)
     out: dict[str, str] = {}
     for prefix in sorted(by_prefix_frag):
-        frags = sorted(by_prefix_frag[prefix], key=_prefix_num)
-        boards = sorted(by_prefix_board.get(prefix, []), key=_prefix_num)
+        frags = sorted(by_prefix_frag[prefix], key=prefix_num)
+        boards = sorted(by_prefix_board.get(prefix, []), key=prefix_num)
         if len(frags) != len(boards):
             raise ValueError(
                 f"cannot map fragment refs {frags} to board refs {boards} for "
