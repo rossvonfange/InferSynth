@@ -10,6 +10,7 @@ KiCAD-MCP-Server venv python (it has pcbnew):
         examples/fabric-demo/gen_board.py examples/fabric-demo/fabric.kicad_pcb
 """
 import sys
+
 import pcbnew
 
 FP = "/usr/share/kicad/footprints"
@@ -38,4 +39,6 @@ add("Resistor_SMD", "R_0603_1608Metric", "R202", "1k", 45, 58)
 add("Capacitor_SMD", "C_0603_1608Metric", "C101", "100n", 40, 70)
 
 board.Save(OUT)
-print(f"wrote {OUT}: {board.GetFootprints().GetCount() if hasattr(board.GetFootprints(),'GetCount') else 'ok'}")
+fps = board.GetFootprints()
+count = fps.GetCount() if hasattr(fps, "GetCount") else "ok"
+print(f"wrote {OUT}: {count}")
