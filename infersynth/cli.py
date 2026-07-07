@@ -498,6 +498,50 @@ def _cmd_stuff(args: argparse.Namespace) -> int:
     return 3 if fit_result.unfittable else 0
 
 
+def _cmd_board(args: argparse.Namespace) -> int:
+    """Auto-floorplan a synthesized design into a placed, grouped, UNROUTED
+    .kicad_pcb (docs/FLOORPLAN.md deliverable 4)."""
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.floorplan import BoardEmitError, emit_board
+    from infersynth.spec import SpecError, load_spec
+
+    design = Path(args.design)
+    if not design.is_dir():
+        print(f"infersynth board: {design} is not a directory", file=sys.stderr)
+        return 2
+    out = Path(args.out) if args.out else design / f"{design.name}.kicad_pcb"
+
+    try:
+        catalog = Catalog.load(args.catalog)
+        placement = None
+        if args.spec:
+            placement = load_spec(args.spec).placement
+        result = emit_board(design, out, catalog, placement)
+    except (CatalogError, SpecError, BoardEmitError, OSError) as exc:
+        print(f"infersynth board: {exc}", file=sys.stderr)
+        return 1
+
+    plan = result.plan
+    print(
+        f"board: {result.board_path}  "
+        f"({result.footprint_count} footprint(s) in {result.group_count} group(s))"
+    )
+    print(f"outline: {plan.board_w_mm:g} x {plan.board_h_mm:g} mm")
+    print("flow order (band, depth):")
+    for c in plan.clusters:
+        depth = c.flow_depth if c.flow_depth >= 0 else "—"
+        print(f"  {c.instance}  [{c.band}, {depth}]  ({len(c.footprints)} fp)")
+    for d in plan.diagnostics:
+        print(f"  ! {d}", file=sys.stderr)
+    print(f"overlaps: {len(result.overlaps)}")
+    print(
+        "NOTE: board is UNROUTED and carries no nets (placement structure only); "
+        "route it in pcbnew — ratsnest import is a future refinement.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _cmd_costs_lock(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
     from infersynth.decide.lockfile import write as write_lockfile
@@ -785,6 +829,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="weight profile (default: production)",
     )
     p_stuff.set_defaults(func=_cmd_stuff)
+
+    p_board = sub.add_parser(
+        "board",
+        help="auto-floorplan a synthesized design into a placed, grouped, "
+        "UNROUTED .kicad_pcb (flow order + spec placement hints) — docs/FLOORPLAN.md",
+    )
+    p_board.add_argument(
+        "--design", required=True, metavar="DIR", help="synthesized design directory"
+    )
+    p_board.add_argument(
+        "--spec",
+        metavar="spec.yaml",
+        help="formal spec supplying the placement: {board, edges} hints (optional)",
+    )
+    p_board.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_board.add_argument(
+        "--out", metavar="board.kicad_pcb", help="output board (default: <design>/<name>.kicad_pcb)"
+    )
+    p_board.set_defaults(func=_cmd_board)
 
     p_costs = sub.add_parser("costs", help="cost lockfile operations")
     costs_sub = p_costs.add_subparsers(dest="costs_command", required=True)
