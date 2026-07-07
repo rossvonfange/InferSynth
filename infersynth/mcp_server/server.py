@@ -96,6 +96,30 @@ _TOOL_SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
             },
         },
     ),
+    "bom": (
+        "Roll up a synthesized design's stamped parts (MPN/Manufacturer/"
+        "Footprint) into a grouped BOM (line items + summary).",
+        {
+            "type": "object",
+            "properties": {"design_dir": {"type": "string"}},
+            "required": ["design_dir"],
+        },
+    ),
+    "pipeline": (
+        "Run the WP-F1 fixed-point pipeline driver (match/decide rounds with "
+        "gate-failure feedback + assisted-second-pass hint) to a converged, "
+        "materialized design. Give exactly one of 'frd' or 'spec'.",
+        {
+            "type": "object",
+            "properties": {
+                "frd": {"type": "string", "description": "path to the FRD file"},
+                "spec": {"type": "string", "description": "path to a formal spec (frd: key)"},
+                "catalog_dir": {"type": "string", "default": "catalog"},
+                "out_dir": {"type": "string", "default": "build"},
+                "max_rounds": {"type": "integer", "default": 3},
+            },
+        },
+    ),
     "elaborate_spec": (
         "[not implemented yet] Elaborate a formal spec into IR.",
         {"type": "object", "properties": {}},

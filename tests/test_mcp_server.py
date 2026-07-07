@@ -188,6 +188,93 @@ class TestRunGates:
         assert result["ok"] is False
 
 
+# --------------------------------------------------------------------------
+# round-3 "surface catch-up": bom / pipeline tools.
+# --------------------------------------------------------------------------
+
+# Same demo text as tests/test_synthesize.py's DEMO_FRD (duplicated per that
+# module's own convention -- see its docstring note on why).
+DEMO_FRD = """# Demo sensor board
+
+- The board shall include a non-inverting amplifier gain stage with gain of 4.
+- The board shall include a voltage reference.
+- The board shall include decoupling.
+- The board shall include an adc driver.
+- The board shall include a 4-wire sensor input connector.
+"""
+
+# Deliberately tiny (one requirement, one cell) so the pipeline tool's test
+# runs its (real, kicad-cli-backed) cell gates quickly.
+SMALL_FRD = """# Small board
+
+- The board shall include decoupling.
+"""
+
+
+class TestBom:
+    def test_bom_on_synthesized_design_matches_library(self, tmp_path: Path):
+        from infersynth.bind.bom import build_bom
+        from infersynth.synthesize import synthesize
+
+        frd = tmp_path / "demo.md"
+        frd.write_text(DEMO_FRD, encoding="utf-8")
+        out = tmp_path / "build"
+        synthesize(frd, CATALOG, out, profile="prototype")
+
+        result = tools.bom(design_dir=str(out))
+        assert result["design_dir"] == str(out)
+        assert result["lines"]
+        assert not result["unbound"]
+
+        expected = build_bom(out)
+        assert result["summary"] == expected.summary
+        assert {line["mpn"] for line in result["lines"]} == {
+            line.mpn for line in expected.lines
+        }
+        # every returned line is JSON-shaped (refs as a list, not a tuple).
+        for line in result["lines"]:
+            assert isinstance(line["refs"], list)
+
+    def test_bom_on_dir_with_no_stamped_parts(self, tmp_path: Path):
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        result = tools.bom(design_dir=str(empty))
+        assert result["lines"] == []
+        assert result["unbound"] == []
+
+
+class TestPipeline:
+    def test_runs_and_returns_ledger_plus_artifacts(self, tmp_path: Path):
+        frd = tmp_path / "small.md"
+        frd.write_text(SMALL_FRD, encoding="utf-8")
+        out = tmp_path / "build"
+
+        result = tools.pipeline(
+            frd=str(frd), catalog_dir=str(CATALOG), out_dir=str(out), max_rounds=2
+        )
+
+        assert isinstance(result["converged"], bool)
+        assert isinstance(result["all_decided"], bool)
+        assert result["rounds"]
+        first_round = result["rounds"][0]
+        assert set(first_round) >= {
+            "index", "excluded_before", "winners", "undecided",
+            "diagnostics", "gate_exclusions", "hints_applied",
+        }
+        assert isinstance(result["pending_resolutions"], list)
+        assert result["synthesis"] is not None
+        assert Path(result["synthesis"]["root"]).exists()
+        assert Path(result["synthesis"]["report"]).exists()
+        assert result["resolutions_path"] is not None
+        assert Path(result["resolutions_path"]).exists()
+
+    def test_requires_exactly_one_of_frd_or_spec(self, tmp_path: Path):
+        with pytest.raises(ValueError):
+            tools.pipeline()
+        with pytest.raises(ValueError):
+            tools.pipeline(frd=str(tmp_path / "a.md"), spec=str(tmp_path / "b.yaml"))
+
+
 class TestNotImplemented:
     @pytest.mark.parametrize(
         "name",

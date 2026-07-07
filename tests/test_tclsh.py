@@ -34,6 +34,15 @@ def test_build_interp_registers_every_tool_name():
     assert interp.eval("info commands is_help") == "is_help"
 
 
+def test_bom_and_pipeline_tools_are_registered():
+    # round-3 "surface catch-up": the two new mcp_server.tools handlers
+    # (bom/pipeline) come through automatically via TOOL_NAMES -- explicit
+    # spot-check alongside the generic test above.
+    interp = build_interp(catalog_dir=str(CATALOG))
+    assert interp.eval("info commands bom") == "bom"
+    assert interp.eval("info commands pipeline") == "pipeline"
+
+
 def test_catalog_search_returns_json_with_both_opamp_cells():
     interp = build_interp(catalog_dir=str(CATALOG))
     result = json.loads(interp.eval("catalog_search -query amplifier"))
