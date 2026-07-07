@@ -77,6 +77,9 @@ class SynthesisResult:
     wiring_plan: WiringPlan | None = None
     #: full-hierarchy ERC summary line when verify ran; None otherwise
     erc_summary: str | None = None
+    #: design-level netlist partition-equivalence summary when verify ran
+    #: (round 2 / SEED_PLAN §2); None otherwise
+    design_netlist_summary: str | None = None
 
     @property
     def all_decided(self) -> bool:
@@ -230,8 +233,14 @@ def synthesize(
     # order 5 / docs note): connectivity errors stop being expected only when
     # the plan is clean (no diagnostics, no unwired signal ports).
     erc_summary: str | None = None
+    design_netlist_summary: str | None = None
     if verify and wiring_plan is not None:
         erc_summary = _erc_report(root, wiring_plan)
+        instance_cells = {inst.instname: inst.cell_key for inst in instantiated}
+        design_netlist_summary = _design_netlist_report(
+            root, wiring_plan, instance_cells, catalog
+        )
+        _write_wiring_plan_json(out_dir, wiring_plan, instance_cells)
 
     trace_path: Path | None = None
     if write_trace:
@@ -251,6 +260,7 @@ def synthesize(
         feeds=tuple(feeds),
         wiring_plan=wiring_plan,
         erc_summary=erc_summary,
+        design_netlist_summary=design_netlist_summary,
     )
     result.report_path.write_text(_render_report(result, catalog), encoding="utf-8")
     return result
@@ -274,6 +284,38 @@ def _erc_report(root: Path, plan: WiringPlan) -> str:
         else "residual (unwired signal ports / diagnostics remain — errors expected)"
     )
     return f"[{result.status.value}] {header} — {verdict}"
+
+
+def _design_netlist_report(
+    root: Path, plan: WiringPlan, instance_cells: dict[str, str], catalog: Catalog
+) -> str:
+    """Run the design-level netlist partition-equivalence gate (round 2 /
+    SEED_PLAN §2); summarize. Reported alongside ``erc_summary`` — same
+    "always run when a plan exists, never hard-gate the pipeline exit" shape
+    as :func:`_erc_report`.
+    """
+    from infersynth.gates.design_netlist import design_netlist_gate
+
+    result = design_netlist_gate(root, plan, instance_cells, catalog)
+    header = result.diagnostics[0] if result.diagnostics else result.status.value
+    return f"[{result.status.value}] {header}"
+
+
+def _write_wiring_plan_json(
+    out_dir: Path, plan: WiringPlan, instance_cells: dict[str, str]
+) -> None:
+    """Persist ``wiring_plan.json`` alongside ``selection_trace.json`` /
+    ``SYNTHESIS.md`` — the serialized form :func:`infersynth.gates.
+    design_netlist.plan_from_dict` reconstructs, so ``infersynth gates
+    --design`` can run the design-netlist gate without re-running synthesis.
+    """
+    import json
+
+    from infersynth.gates.design_netlist import plan_to_dict
+
+    (out_dir / "wiring_plan.json").write_text(
+        json.dumps(plan_to_dict(plan, instance_cells), indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
@@ -419,6 +461,13 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
             "## Full-hierarchy ERC (reported, not gated)",
             "",
             f"{result.erc_summary}",
+        ]
+    if result.design_netlist_summary is not None:
+        lines += [
+            "",
+            "## Design-level netlist partition-equivalence (reported, not gated)",
+            "",
+            f"{result.design_netlist_summary}",
         ]
     lines.append("")
     return "\n".join(lines)

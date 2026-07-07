@@ -28,7 +28,7 @@ def _cmd_elaborate(args: argparse.Namespace) -> int:
 def _cmd_gates(args: argparse.Namespace) -> int:
     import json
 
-    from infersynth.catalog import CatalogError
+    from infersynth.catalog import Catalog, CatalogError
     from infersynth.gates import GateReport, report_to_dict
     from infersynth.gates.run import run_cell_gates, run_design_gates
 
@@ -47,7 +47,30 @@ def _cmd_gates(args: argparse.Namespace) -> int:
                 print("infersynth gates: --design requires --root NAME.kicad_sch", file=sys.stderr)
                 return 2
             root_path = Path(args.design) / args.root
-            report = run_design_gates(root_path, golden=args.golden)
+
+            # Round 2 / SEED_PLAN §2: design-netlist gate, wired up when a
+            # synthesize()-written wiring_plan.json sits alongside root_path
+            # (see infersynth.synthesize._write_wiring_plan_json) AND --catalog
+            # is given to resolve each instance's cell. Auto-detected rather
+            # than a required flag so a plain ERC(+golden) design check keeps
+            # working unchanged when there's no plan to check.
+            wiring_plan = instance_cells = catalog = None
+            plan_json = Path(args.design) / "wiring_plan.json"
+            if plan_json.is_file() and args.catalog:
+                import json
+
+                from infersynth.gates.design_netlist import plan_from_dict
+
+                wiring_plan, instance_cells = plan_from_dict(json.loads(plan_json.read_text()))
+                catalog = Catalog.load(args.catalog)
+
+            report = run_design_gates(
+                root_path,
+                golden=args.golden,
+                wiring_plan=wiring_plan,
+                instance_cells=instance_cells,
+                catalog=catalog,
+            )
     except (CatalogError, OSError, ValueError) as exc:
         print(f"infersynth gates: {exc}", file=sys.stderr)
         return 1
@@ -247,6 +270,8 @@ def _cmd_synthesize(args: argparse.Namespace) -> int:
             print(f"  ! {d}")
     if result.erc_summary is not None:
         print(f"erc: {result.erc_summary}")
+    if result.design_netlist_summary is not None:
+        print(f"design-netlist: {result.design_netlist_summary}")
     if result.trace_path is not None:
         print(f"trace: {result.trace_path}")
     print(f"report: {result.report_path}")
@@ -416,6 +441,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_gates.add_argument(
         "--golden", metavar="FILE", help="golden_netlist.txt to compare against (design mode)"
+    )
+    p_gates.add_argument(
+        "--catalog",
+        metavar="DIR",
+        help="catalog directory (design mode: resolves each instance's cell for the "
+        "design-netlist gate, auto-run when --design/wiring_plan.json is present)",
     )
     p_gates.add_argument(
         "--json", metavar="OUT", help="write a panel-compatible GateReport JSON to OUT"

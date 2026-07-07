@@ -1,6 +1,7 @@
 """Verification gates (DESIGN.md section 7): runner, real and stub gates."""
 
 from infersynth.gates.ams_simulation import AMS_GATE, ams_simulation_cell_gate
+from infersynth.gates.design_netlist import design_netlist_gate, expected_pins_for_member
 from infersynth.gates.erc import ErcError, erc_gate, kicad_cli_available, run_erc
 from infersynth.gates.harness import (
     HarnessError,
@@ -46,7 +47,9 @@ __all__ = [
     "TriagePolicy",
     "ams_simulation_cell_gate",
     "compare_partitions",
+    "design_netlist_gate",
     "erc_gate",
+    "expected_pins_for_member",
     "export_netlist",
     "generate_harness",
     "harness_params",

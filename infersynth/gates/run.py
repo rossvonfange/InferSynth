@@ -17,8 +17,10 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from infersynth.catalog import Catalog
 from infersynth.catalog.loader import CellPackage, load_cell
 from infersynth.gates.ams_simulation import ams_simulation_cell_gate
+from infersynth.gates.design_netlist import design_netlist_gate
 from infersynth.gates.erc import erc_gate
 from infersynth.gates.harness import generate_harness
 from infersynth.gates.netlist import export_netlist, parse_golden_netlist
@@ -26,6 +28,7 @@ from infersynth.gates.netlist_equiv import partition_equivalence_gate
 from infersynth.gates.runner import GateReport, GateResult
 from infersynth.gates.simulation import simulation_cell_gate
 from infersynth.gates.triage import TriagePolicy
+from infersynth.netflow.plan import WiringPlan
 
 __all__ = ["run_cell_gates", "run_design_gates"]
 
@@ -84,8 +87,19 @@ def run_design_gates(
     root: str | Path,
     golden: str | Path | None = None,
     policy: TriagePolicy | None = None,
+    wiring_plan: WiringPlan | None = None,
+    instance_cells: dict[str, str] | None = None,
+    catalog: Catalog | None = None,
 ) -> GateReport:
-    """Run ERC on an arbitrary design *root*; optionally compare to *golden*."""
+    """Run ERC on an arbitrary design *root*; optionally compare to *golden*.
+
+    *wiring_plan*/*instance_cells*/*catalog* (round 2 / SEED_PLAN §2) add the
+    design-level netlist partition-equivalence gate — every plan net's
+    members must be mutually connected in *root*'s exported netlist (see
+    :mod:`infersynth.gates.design_netlist`). Skipped (loudly) when any of the
+    three is omitted, the same shape :func:`run_cell_gates` uses when a cell
+    declares no ``verification.golden_netlist``.
+    """
     root = Path(root)
     policy = policy or TriagePolicy.default()
     report = GateReport()
@@ -97,6 +111,16 @@ def run_design_gates(
         report.results.append(
             GateResult.skipped(
                 "netlist-partition-equivalence", "no --golden partition supplied"
+            )
+        )
+    if wiring_plan is not None and instance_cells is not None and catalog is not None:
+        report.results.append(design_netlist_gate(root, wiring_plan, instance_cells, catalog))
+    else:
+        report.results.append(
+            GateResult.skipped(
+                "design-netlist-partition-equivalence",
+                "no wiring_plan/instance_cells/catalog supplied "
+                "(e.g. no wiring_plan.json + --catalog)",
             )
         )
     return report
