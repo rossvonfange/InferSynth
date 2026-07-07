@@ -35,13 +35,14 @@ from infersynth.decide.engine import Decision, decide
 from infersynth.decide.lockfile import Lockfile
 from infersynth.decide.profiles import WeightProfile, load_profile
 from infersynth.gates.harness import HarnessError, harness_params
+from infersynth.gates.runner import GateResult
 from infersynth.lint import lint_path
 from infersynth.match import MatchResult, match
 from infersynth.match.allocation import AllocationTable
 from infersynth.match.knobs import MatchKnobs
 from infersynth.match.propagate import EndpointSpec
 from infersynth.netflow.plan import WiringPlan, build_plan
-from infersynth.spec import FeedEdge
+from infersynth.spec import DesignTestbench, FeedEdge
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,8 @@ class SynthesisResult:
     wiring_plan: WiringPlan | None = None
     #: full-hierarchy ERC summary line when verify ran; None otherwise
     erc_summary: str | None = None
+    #: design-simulation gate result when a testbench ran; None otherwise
+    design_sim: GateResult | None = None
 
     @property
     def all_decided(self) -> bool:
@@ -140,6 +143,7 @@ def synthesize(
     wiring: bool = True,
     verify: bool = False,
     rail_aliases: dict[str, str] | None = None,
+    testbench: DesignTestbench | None = None,
 ) -> SynthesisResult:
     """Run the full pipeline and materialize the decision as a KiCad design.
 
@@ -233,6 +237,29 @@ def synthesize(
     if verify and wiring_plan is not None:
         erc_summary = _erc_report(root, wiring_plan)
 
+    # Design-simulation gate (SEED_PLAN §1 crit 3): compose + run the whole
+    # design's behavioral chain when a testbench is provided. Loudly SKIPPED
+    # (never a silent pass) when there is no testbench or the plan is not clean.
+    design_sim: GateResult | None = None
+    if verify and wiring_plan is not None:
+        from infersynth.gates.design_simulation import design_simulation_gate
+
+        interim = SynthesisResult(
+            root=root,
+            out_dir=out_dir,
+            instantiated=tuple(instantiated),
+            skipped=tuple(skipped),
+            decision=decision,
+            match_result=mres,
+            trace_path=None,
+            report_path=out_dir / "SYNTHESIS.md",
+            feeds=tuple(feeds),
+            wiring_plan=wiring_plan,
+        )
+        design_sim = design_simulation_gate(
+            {"result": interim, "catalog": catalog, "testbench": testbench}
+        )
+
     trace_path: Path | None = None
     if write_trace:
         trace = decide_trace.build(mres, catalog, decision)
@@ -251,6 +278,7 @@ def synthesize(
         feeds=tuple(feeds),
         wiring_plan=wiring_plan,
         erc_summary=erc_summary,
+        design_sim=design_sim,
     )
     result.report_path.write_text(_render_report(result, catalog), encoding="utf-8")
     return result
@@ -420,5 +448,21 @@ def _render_report(result: SynthesisResult, catalog: Catalog) -> str:
             "",
             f"{result.erc_summary}",
         ]
+
+    if result.design_sim is not None:
+        ds = result.design_sim
+        lines += [
+            "",
+            "## Design-level simulation (SEED_PLAN §1 crit 3)",
+            "",
+            f"[{ds.status.value.upper()}] {_GATE_DESIGN_SIM}: the whole design's "
+            "behavioral chain, composed from each cell's model/behavior.py and "
+            "wired by the plan's nets.",
+            "",
+        ]
+        lines += [f"- {d}" for d in ds.diagnostics]
     lines.append("")
     return "\n".join(lines)
+
+
+_GATE_DESIGN_SIM = "design-simulation"
