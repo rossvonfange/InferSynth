@@ -691,6 +691,43 @@ def _cmd_segment(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- promote (segment -> subsystem cell; foundry loop) — localized, self-contained ---
+def _cmd_promote(args: argparse.Namespace) -> int:
+    from infersynth.catalog import Catalog, CatalogError
+    from infersynth.gates.netlist import NetlistError
+    from infersynth.recognize import (
+        hierarchical_recognize,
+        load_design_netlist,
+        promote_result,
+    )
+
+    try:
+        catalog = Catalog.load(args.catalog)
+    except CatalogError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        design = load_design_netlist(args.netlist)
+    except NetlistError as exc:
+        print(f"infersynth promote: {exc}", file=sys.stderr)
+        return 2
+
+    hres = hierarchical_recognize(design, catalog)
+    board_hint = args.board or Path(args.netlist).name
+    written = promote_result(
+        hres, design, args.out, catalog=catalog, board_hint=board_hint
+    )
+    print(
+        f"promoted {len(hres.promoted_candidates)} candidate(s) -> "
+        f"{len(written)} distinct subsystem cell(s) in {args.out}",
+        file=sys.stderr,
+    )
+    for path in written:
+        print(path)
+    print(f"{Path(args.out) / 'PROMOTED.md'}  (review summary)")
+    return 0
+
+
 # --- verify-recovered (Loom Pillar 2 honesty gate) — localized, self-contained ---
 def _cmd_verify_recovered(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
@@ -795,6 +832,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", metavar="OUT.json", help="write the SegmentationResult JSON to OUT"
     )
     p_segment.set_defaults(func=_cmd_segment)
+
+    # promote (segment -> reviewable subsystem cell; foundry loop) — localized.
+    p_promote = sub.add_parser(
+        "promote",
+        help="promote a board's unrecognized segments into reviewable "
+        "subsystem_cell.yaml stubs (the cell foundry loop)",
+    )
+    p_promote.add_argument(
+        "--netlist", required=True, metavar="F.xml", help="design netlist (KiCad kicadxml)"
+    )
+    p_promote.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
+    p_promote.add_argument(
+        "--out", required=True, metavar="DIR",
+        help="output directory for generated subsystem_cell.yaml stubs + PROMOTED.md",
+    )
+    p_promote.add_argument(
+        "--board", default=None, metavar="NAME",
+        help="board provenance hint stamped into each stub (default: netlist filename)",
+    )
+    p_promote.set_defaults(func=_cmd_promote)
 
     # verify-recovered (Loom Pillar 2 honesty gate) — localized, self-contained.
     p_verify_rec = sub.add_parser(
