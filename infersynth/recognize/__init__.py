@@ -36,6 +36,11 @@ from infersynth.recognize.index import ReverseIndex, build_reverse_index
 from infersynth.recognize.invert import InversionResult, invert_params
 from infersynth.recognize.match import CellMatch, match_cell
 from infersynth.recognize.netlist import Component, DesignNetlist, load_design_netlist
+from infersynth.recognize.promote import (
+    candidate_to_subsystem_cell,
+    promote_result,
+    shape_key,
+)
 from infersynth.recognize.recognizer import (
     RecognitionResult,
     RecognizedInstance,
@@ -82,6 +87,7 @@ __all__ = [
     "SubsystemCellError",
     "SubsystemMatch",
     "build_reverse_index",
+    "candidate_to_subsystem_cell",
     "classify_nets",
     "hierarchical_recognize",
     "invert_params",
@@ -91,7 +97,9 @@ __all__ = [
     "match_cell",
     "match_subsystem",
     "match_subsystems",
+    "promote_result",
     "recognize",
     "restrict_netlist",
     "segment",
+    "shape_key",
 ]

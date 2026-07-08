@@ -73,6 +73,10 @@ _KNOWN_KEYS = {
     "params_stuffable",
     "verification",
     "description",
+    # A provisional, auto-generated stub (infersynth.recognize.promote) stamps a
+    # top-level ``provenance`` block (generated_by / needs_review / observed).
+    # It is metadata only — tolerated on load, not read into the SubsystemCell.
+    "provenance",
 }
 _INTERFACE_KEYS = {"kind", "min_width", "max_width"}
 _RULE_KEYS = {"class", "role", "count"}
