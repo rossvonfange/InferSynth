@@ -622,6 +622,67 @@ def _cmd_lsp(args: argparse.Namespace) -> int:
     return 0
 
 
+#: LabelClaim kinds accepted by ``--labels``.
+_LABEL_KINDS = ("net_role", "net_label", "protocol", "block")
+
+
+class _LabelsError(ValueError):
+    """A ``--labels`` file that is missing, unreadable, or malformed."""
+
+
+def _load_labels(path: str | None):
+    """Read a ``--labels`` JSON file into ``list[LabelClaim]``, or ``None``.
+
+    Schema — a JSON list of objects::
+
+        [
+          {"kind": "net_role", "value": "SPI0_MOSI", "net": "N$1234"},
+          {"kind": "net_role", "value": "MDIO",      "net": "N$77"},
+          {"kind": "net_label", "value": "DDR4_DQ0", "net": "N$5"},
+          {"kind": "block",     "value": "PMIC",     "refs": ["U4", "L1", "C9"]}
+        ]
+
+    ``kind`` ∈ {net_role, net_label, protocol, block}; ``value`` is required;
+    ``net`` (str) scopes a net_role/net_label/protocol; ``refs`` (list[str])
+    scopes a block. A malformed file raises :class:`_LabelsError` with a clear
+    message (never a traceback). ``path is None`` -> ``None`` (labels unchanged).
+    """
+    if path is None:
+        return None
+    import json
+
+    from infersynth.recognize.segment import LabelClaim
+
+    p = Path(path)
+    try:
+        raw = json.loads(p.read_text())
+    except OSError as exc:
+        raise _LabelsError(f"cannot read labels file {p}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise _LabelsError(f"labels file {p} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, list):
+        raise _LabelsError(f"labels file {p}: top level must be a JSON list of label objects")
+    out = []
+    for i, item in enumerate(raw):
+        where = f"labels file {p}: entry [{i}]"
+        if not isinstance(item, dict):
+            raise _LabelsError(f"{where} must be an object")
+        kind = item.get("kind")
+        if kind not in _LABEL_KINDS:
+            raise _LabelsError(f"{where}: 'kind' must be one of {_LABEL_KINDS}, got {kind!r}")
+        value = item.get("value")
+        if not isinstance(value, str) or not value:
+            raise _LabelsError(f"{where}: 'value' must be a non-empty string")
+        net = item.get("net")
+        if net is not None and not isinstance(net, str):
+            raise _LabelsError(f"{where}: 'net' must be a string or absent")
+        refs = item.get("refs", [])
+        if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs):
+            raise _LabelsError(f"{where}: 'refs' must be a list of strings")
+        out.append(LabelClaim(kind=kind, value=value, refs=tuple(refs), net=net))
+    return out
+
+
 # --- recognize (Loom Pillar 2: reverse weaving) — localized, self-contained ---
 def _cmd_recognize(args: argparse.Namespace) -> int:
     from infersynth.catalog import Catalog, CatalogError
@@ -638,8 +699,13 @@ def _cmd_recognize(args: argparse.Namespace) -> int:
     except NetlistError as exc:
         print(f"infersynth recognize: {exc}", file=sys.stderr)
         return 2
+    try:
+        labels = _load_labels(getattr(args, "labels", None))
+    except _LabelsError as exc:
+        print(f"infersynth recognize: {exc}", file=sys.stderr)
+        return 2
     if getattr(args, "hierarchical", False):
-        hres = hierarchical_recognize(design, catalog)
+        hres = hierarchical_recognize(design, catalog, labels=labels)
         if args.out:
             Path(args.out).write_text(hres.to_json())
         print(hres.to_markdown())
@@ -678,7 +744,12 @@ def _cmd_segment(args: argparse.Namespace) -> int:
     except NetlistError as exc:
         print(f"infersynth segment: {exc}", file=sys.stderr)
         return 2
-    result = segment(design, catalog)
+    try:
+        labels = _load_labels(getattr(args, "labels", None))
+    except _LabelsError as exc:
+        print(f"infersynth segment: {exc}", file=sys.stderr)
+        return 2
+    result = segment(design, catalog, labels=labels)
     if args.out:
         Path(args.out).write_text(result.to_json())
     print(result.to_markdown())
@@ -711,8 +782,13 @@ def _cmd_promote(args: argparse.Namespace) -> int:
     except NetlistError as exc:
         print(f"infersynth promote: {exc}", file=sys.stderr)
         return 2
+    try:
+        labels = _load_labels(getattr(args, "labels", None))
+    except _LabelsError as exc:
+        print(f"infersynth promote: {exc}", file=sys.stderr)
+        return 2
 
-    hres = hierarchical_recognize(design, catalog)
+    hres = hierarchical_recognize(design, catalog, labels=labels)
     board_hint = args.board or Path(args.netlist).name
     written = promote_result(
         hres, design, args.out, catalog=catalog, board_hint=board_hint
@@ -817,6 +893,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="segment the netlist first (interface-bounded pre-pass), then recognize / "
         "promote each segment — required to fire on a large vendor board",
     )
+    p_recognize.add_argument(
+        "--labels",
+        metavar="LABELS.json",
+        help="JSON list of LabelClaim hints (net_role/net_label/protocol/block); "
+        "net_role tokens corroborate protocol + connector signatures. Applies to "
+        "--hierarchical segmentation.",
+    )
     p_recognize.set_defaults(func=_cmd_recognize)
 
     # segment (hierarchical-recognition pre-pass) — localized, self-contained.
@@ -830,6 +913,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_segment.add_argument("--catalog", required=True, metavar="DIR", help="catalog directory")
     p_segment.add_argument(
         "--out", metavar="OUT.json", help="write the SegmentationResult JSON to OUT"
+    )
+    p_segment.add_argument(
+        "--labels",
+        metavar="LABELS.json",
+        help="JSON list of LabelClaim hints (net_role/net_label/protocol/block); "
+        "net_role tokens corroborate protocol + connector signatures on "
+        "generically-named nets (a stripped .brd). No flag -> pure connectivity.",
     )
     p_segment.set_defaults(func=_cmd_segment)
 
@@ -850,6 +940,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_promote.add_argument(
         "--board", default=None, metavar="NAME",
         help="board provenance hint stamped into each stub (default: netlist filename)",
+    )
+    p_promote.add_argument(
+        "--labels",
+        metavar="LABELS.json",
+        help="JSON list of LabelClaim hints (net_role/net_label/protocol/block); "
+        "net_role tokens corroborate protocol + connector signatures during "
+        "segmentation.",
     )
     p_promote.set_defaults(func=_cmd_promote)
 
