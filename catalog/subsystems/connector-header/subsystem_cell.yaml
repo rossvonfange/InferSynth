@@ -1,0 +1,42 @@
+# Connector header — subsystem-cell tier (interface + composition, NOT a
+# golden subgraph).
+#
+# A segment the segmenter labels `gpio` (its boundary carries an indexed GPIO/
+# DIP-switch/general IO bundle — nets sharing a letter-terminated prefix
+# containing "GPIO", "DIP", or "SW"; see segment.py `_BUS_KIND_KEYWORDS`)
+# whose members are a physical expansion connector plus optional series or
+# pull-up/pull-down passives on its individual lines. Pin count is the whole
+# reason this needs a composition cell rather than a golden subgraph: a 2-pin
+# test header and a 40-pin GPIO expansion header are the same *kind* of thing
+# (one connector, its lines optionally protected/pulled) but no fixed subgraph
+# spans both.
+#
+# On the real PolarFire SoC Discovery Kit board this recognizes the DIP-
+# switch-bank / GPIO expansion header segment: one connector (J10) plus 3
+# series/pull resistors, boundary width 10 (a 10-line GPIO bundle). The width
+# band is deliberately generalized far past that single 10-wide instance: 2
+# covers a bare 2-pin test/jumper header, 64 covers a wide GPIO expansion bus
+# (e.g. a 40-pin header with most lines individually broken out) — header pin
+# counts vary hugely board to board, so the band must be wide by design.
+kind: subsystem
+name: connector-header
+description: >-
+  A generic IO/GPIO expansion header segment — a connector plus optional
+  per-line series or pull passives.
+
+interface:
+  kind: gpio
+  min_width: 2
+  max_width: 64
+
+composition:
+  - {class: J, role: connector,      count: [1, 1]}    # the physical header/connector
+  - {class: R, role: series_pullup,  count: [0, 16]}    # optional per-line series/pull passives
+
+anchor: null
+
+params_stuffable:
+  - n_pins
+
+verification:
+  golden_ref_cell: null

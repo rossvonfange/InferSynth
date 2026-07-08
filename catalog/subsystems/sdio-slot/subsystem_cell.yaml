@@ -1,0 +1,45 @@
+# SDIO slot — subsystem-cell tier (interface + composition, NOT a golden
+# subgraph).
+#
+# A segment the segmenter labels `sdio` (its boundary carries an indexed SDIO
+# bus bundle: CLK/CMD/DAT0-3 style nets sharing a prefix containing "SDIO" or
+# "SD_" — see segment.py `_BUS_KIND_KEYWORDS`) whose members are the physical
+# card/module connector plus an optional level-shifter/transceiver IC and
+# optional series/pull passives. This is the third real promoted-segment
+# shape harvested from the PolarFire board (docs/HIERARCHICAL_RECOGNITION.md
+# "vendor boards become a cell foundry"): a `power`-kind segment does not
+# actually occur on this board (rail/ground nets are classified `rail`, never
+# `interface`, by `segment.py` `classify_nets` — a rail is a cut line, never a
+# boundary interface kind — so no segment can ever carry `interface_kind ==
+# "power"`); `sdio` is the next real, clean, generalizable promoted kind, so
+# it is captured here instead, per the task's own fallback instruction.
+#
+# On PolarFire this recognizes the microSD card-edge connector segment: one
+# connector (J) directly bonded to one transceiver/level-shifter IC (U), no
+# local passives, boundary width 8 (CLK/CMD/DAT0-3 + CD/WP-style lines). Width
+# is generalized well past that single observed instance: 4 covers a minimal
+# 1-bit SDIO link (CLK/CMD/DAT0 + one control line), 16 covers a wide
+# 8-bit-parity/eMMC-style slot with extra sideband signals.
+kind: subsystem
+name: sdio-slot
+description: >-
+  An SDIO/SD-card slot segment — a card-edge connector plus an optional
+  transceiver/level-shifter and series passives.
+
+interface:
+  kind: sdio
+  min_width: 4
+  max_width: 16
+
+composition:
+  - {class: J, role: connector,   count: [1, 1]}   # the card-edge / module connector
+  - {class: U, role: transceiver, count: [0, 2]}    # optional level-shifter / SDIO transceiver
+  - {class: R, role: series,      count: [0, 8]}    # optional series/pull passives
+
+anchor: null
+
+params_stuffable:
+  - bus_width
+
+verification:
+  golden_ref_cell: null

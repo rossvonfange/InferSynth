@@ -1,0 +1,40 @@
+# Display header — subsystem-cell tier (interface + composition, NOT a golden
+# subgraph). OPTIONAL 4th cell: generalizes a fourth real promoted kind
+# observed on the PolarFire board past that board's exact instance.
+#
+# A segment the segmenter labels `display` (its boundary carries an indexed
+# display/segment/LCD bundle — nets sharing a letter-terminated prefix
+# containing "SEG", "DSP", or "LCD"; see segment.py `_BUS_KIND_KEYWORDS`)
+# whose members are a driver IC plus optional series current-limit/pull
+# passives on its segment/digit lines. A 7-segment single-digit display
+# driver and a multiplexed multi-digit LCD/segment driver both fit this
+# shape; only the boundary width and passive count scale.
+#
+# On the real PolarFire SoC Discovery Kit board this recognizes the display-
+# driver segment: one driver IC (U6) plus one series resistor, boundary width
+# 16 (a 16-line segment/digit bundle). Width is generalized well past that
+# single 16-wide instance: 4 covers a minimal single-digit driver (a handful
+# of segment lines), 32 covers a wide multiplexed multi-digit / small
+# graphical LCD interface.
+kind: subsystem
+name: display-header
+description: >-
+  A display/segment driver segment — a driver IC plus optional series
+  current-limit or pull passives on its segment/digit lines.
+
+interface:
+  kind: display
+  min_width: 4
+  max_width: 32
+
+composition:
+  - {class: U, role: driver, count: [1, 1]}   # the segment/LCD driver IC
+  - {class: R, role: series, count: [0, 8]}    # optional per-line series/current-limit passives
+
+anchor: null
+
+params_stuffable:
+  - n_segments
+
+verification:
+  golden_ref_cell: null

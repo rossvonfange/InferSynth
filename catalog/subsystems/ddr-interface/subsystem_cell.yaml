@@ -1,0 +1,53 @@
+# DDR interface — subsystem-cell tier (interface + composition, NOT a golden
+# subgraph).
+#
+# A segment the segmenter labels `ddr` (its boundary carries an indexed DDR
+# bus bundle: DQ/ADDR/CLKOUT-style nets sharing a letter-terminated prefix
+# containing "DDR" or "ADDR" — see segment.py `_BUS_KIND_KEYWORDS`) whose
+# members are the memory-interface core (the controller/PHY IC anchor) plus
+# its series/parallel termination network and local decoupling. Two DDR
+# interfaces never share a golden subgraph — a x8 DDR3 link, a x16/x32 DDR4
+# link with ECC, and a x64 dual-rank link all have wildly different member
+# counts but are the same *kind* of thing: one memory core, a termination
+# forest scaled to bus width, some bulk/HF decoupling. Width is the number of
+# distinct `ddr`-kind nets crossing the segment's boundary.
+#
+# On the real PolarFire SoC Discovery Kit board this recognizes BOTH real DDR
+# segments observed by segmenting the board: the FPGA's own local cluster
+# (U1 + 68 termination Rs + 9 decoupling Cs + a reference clock, boundary
+# width 28 — the single biggest promoted segment on the board, exactly as
+# expected for a device with a DDR4 hard controller) and a small satellite
+# VTT/reference termination network (1 U + 3 R, same 28-wide DDR boundary).
+# min_width/max_width is deliberately generalized well past PolarFire's
+# observed 28: 8 covers a narrow x8 DDR3 link (8 DQ + few ctrl), 96 covers a
+# wide x64 DDR4/DDR5 link with ECC, address, and command/control nets bundled
+# into the same `ddr`-kind boundary group.
+#
+# No golden_ref_cell: unlike I2C (whose electrical core is a small fixed
+# pull-up pair) a DDR interface has no single small analog core to invert
+# parameters through — it is purely structural. This is `v0`: width +
+# composition only, no per-net timing/impedance recovery.
+kind: subsystem
+name: ddr-interface
+description: >-
+  A DDR/memory-interface segment — a controller/PHY core plus its
+  termination network and local decoupling, scaled to bus width.
+
+interface:
+  kind: ddr
+  min_width: 8
+  max_width: 96
+
+composition:
+  - {class: U, role: controller_phy, count: [1, 2]}   # memory controller / PHY core
+  - {class: R, role: termination,    count: [1, 80]}  # series/parallel/VTT termination, scales with width
+  - {class: C, role: decouple,       count: [0, 16]}  # local bulk + HF decoupling
+
+anchor: null
+
+params_stuffable:
+  - bus_width
+  - data_rate
+
+verification:
+  golden_ref_cell: null

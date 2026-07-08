@@ -504,6 +504,82 @@ def test_polarfire_board_segments_sanely(tmp_path: Path, catalog: Catalog) -> No
 @pytest.mark.slow
 @pytest.mark.skipif(_KICAD is None, reason="kicad-cli not on PATH")
 @pytest.mark.skipif(not _BRD.is_file(), reason="PolarFire .brd reference absent")
+def test_polarfire_canonical_cells_push_recognized_subsystem_above_seven(
+    tmp_path: Path, catalog: Catalog
+) -> None:
+    """THE PAYOFF: with the 4 hand-authored canonical cells (ddr-interface,
+    sdio-slot, connector-header, display-header) present in the catalog
+    (catalog/subsystems/, loaded automatically — no code change), re-running
+    hierarchical_recognize on the real PolarFire board pushes
+    ``recognized_subsystem`` above the pre-existing baseline of 7 (i2c-bus x1,
+    led-bank x4, diff-pair-link x2), with NO regression on that baseline 7 and
+    no new cell mis-claiming an i2c/led segment. Run twice for determinism:
+    identical count AND identical segment->cell mapping both times."""
+    out_pcb = tmp_path / "pf.kicad_pcb"
+    proc = subprocess.run(
+        ["kicad-cli", "pcb", "import", "--format", "auto", "-o", str(out_pcb), str(_BRD)],
+        capture_output=True,
+        text=True,
+        timeout=420,
+    )
+    if not out_pcb.is_file():
+        pytest.skip(f"kicad-cli import failed: {(proc.stderr or proc.stdout).strip()}")
+    design = _design_netlist_from_pcb(out_pcb)
+
+    def _mapping(hres) -> dict[str, str]:
+        return {
+            s.segment.id: s.subsystem_match.cell_name for s in hres.recognized_subsystem
+        }
+
+    hres1 = hierarchical_recognize(design, catalog)
+    hres2 = hierarchical_recognize(design, catalog)
+
+    n1 = len(hres1.recognized_subsystem)
+    n2 = len(hres2.recognized_subsystem)
+    mapping1 = _mapping(hres1)
+    mapping2 = _mapping(hres2)
+
+    print(f"\n[polarfire canonical cells] recognized_subsystem = {n1} (baseline was 7)")
+    for seg_id, cell_name in sorted(mapping1.items()):
+        print(f"    {seg_id} -> {cell_name}")
+
+    # determinism: identical count and identical segment->cell mapping.
+    assert n1 == n2
+    assert mapping1 == mapping2
+
+    # THE PAYOFF: strictly above the pre-existing 7-segment baseline.
+    assert n1 > 7, (n1, mapping1)
+
+    cell_counts: dict[str, int] = {}
+    for cell_name in mapping1.values():
+        cell_counts[cell_name] = cell_counts.get(cell_name, 0) + 1
+
+    # no regression: the original 7 (i2c-bus x1, led-bank x4, diff-pair-link x2)
+    # still recognize correctly.
+    assert cell_counts.get("i2c-bus", 0) == 1
+    assert cell_counts.get("led-bank", 0) == 4
+    assert cell_counts.get("diff-pair-link", 0) == 2
+
+    # at least one segment now recognizes as each of the 4 new canonical cells.
+    for new_cell in ("ddr-interface", "sdio-slot", "connector-header", "display-header"):
+        assert cell_counts.get(new_cell, 0) >= 1, (new_cell, cell_counts)
+
+    # no new cell mis-claimed an i2c or led segment: every recognized i2c/led
+    # segment's match is still exactly i2c-bus / led-bank (checked above via
+    # cell_counts), and none of the 4 new cells appear on a segment whose
+    # dominant interface_kind is i2c or led (structurally impossible per
+    # match_subsystem's interface_kind equality check, verified here on the
+    # real board's actual segmentation rather than just asserted-by-construction).
+    seg_kind_by_id = {s.segment.id: s.segment.interface_kind for s in hres1.per_segment}
+    for seg_id, cell_name in mapping1.items():
+        if cell_name in ("ddr-interface", "sdio-slot", "connector-header", "display-header"):
+            assert seg_kind_by_id[seg_id] not in ("i2c", "led"), (seg_id, cell_name)
+
+
+@pytest.mark.kicad
+@pytest.mark.slow
+@pytest.mark.skipif(_KICAD is None, reason="kicad-cli not on PATH")
+@pytest.mark.skipif(not _BRD.is_file(), reason="PolarFire .brd reference absent")
 def test_polarfire_promote_closes_the_foundry_loop(tmp_path: Path, catalog: Catalog) -> None:
     """THE FOUNDRY LOOP: promote the board's unrecognized segments into generated
     subsystem_cell.yaml stubs, drop them into the catalog, and re-recognize the
