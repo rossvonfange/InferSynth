@@ -1,0 +1,123 @@
+# Protocol interface TOPOLOGICAL signatures (the "known not guessed" reverse
+# side of interfaces.yaml). interfaces.yaml is the FORWARD data model — how a
+# cell groups ports into bundles and how two bundles mate (see
+# infersynth/catalog/interfaces.py `mates()`, which this file deliberately does
+# NOT touch). This file is the REVERSE fingerprint: given an unlabeled bundle of
+# nets, which standard protocol is it? Recognition is by STRUCTURE first —
+# net cardinality, differential-pair count, point-to-point vs shared-multidrop
+# topology, pull-up-to-rail presence — with net-name role tokens only
+# CORROBORATING (disambiguating two structurally-identical protocols and raising
+# confidence), never being the emitted kind themselves. Standard protocols are
+# SPECS, not things to learn: there are ~20 of them and their fingerprints are
+# fixed, so we encode them once. See infersynth/recognize/interface_signatures.py
+# `classify_interface`.
+#
+# Fields per signature:
+#   net_count:  [lo, hi]  inclusive range on the bundle's net cardinality.
+#   diff_pairs: [lo, hi]  inclusive range on the # of differential pairs found
+#                         (structurally: two nets sharing the same 2-component
+#                         span, or corroborated by a P/N name suffix).
+#   topology:   point_to_point | multidrop | any   (SOFT — nudges confidence and
+#                         disambiguates; never a hard reject, since a 2-device
+#                         i2c bus is degree-2 and would fail a hard multidrop).
+#   pullups:    expected | optional | none          (SOFT — same treatment).
+#   role_hints: net-name tokens that corroborate + disambiguate (SDA/SCL/MOSI…).
+#               A token matches a net whose name carries it as a whole token or
+#               an indexed member (DQ matches DQ0..DQ31). Never the emitted kind.
+#   base_confidence: confidence of a purely-structural match, before net-name
+#               corroboration raises it.
+version: 1
+signatures:
+  i2c:
+    net_count: [2, 2]
+    diff_pairs: [0, 0]
+    topology: multidrop
+    pullups: expected
+    role_hints: [SDA, SCL]
+    base_confidence: 0.55
+  spi:
+    net_count: [3, 6]        # SCLK+MOSI+MISO, plus 0..3 chip selects
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [SCLK, SCK, MOSI, MISO, SDI, SDO, MRST, MTSR, CS, SS, CE]
+    base_confidence: 0.5
+  uart:
+    net_count: [2, 2]
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [TX, RX, TXD, RXD, RTS, CTS]
+    base_confidence: 0.4
+  usb2:
+    net_count: [2, 2]
+    diff_pairs: [1, 1]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [DP, DM, DPLUS, DMINUS, USB, USBDP, USBDM]
+    base_confidence: 0.5
+  can:
+    net_count: [2, 2]
+    diff_pairs: [0, 1]       # CANH/CANL are a routed pair but not P/N-named, so
+                             # the pair may read as 0 diff pairs — names decide.
+    topology: multidrop
+    pullups: optional
+    role_hints: [CANH, CANL, CAN]   # the CAN BUS pair (not a transceiver's
+                                    # logic-side TXD/RXD, which are uart-shaped)
+    base_confidence: 0.5
+  pcie:
+    net_count: [4, 34]       # x1 = 2 pairs (TX,RX); scales to x16 + refclk
+    diff_pairs: [2, 17]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [PCIE, PET, PER, PERST, PEX, TXP, TXN, RXP, RXN, REFCLK]
+    base_confidence: 0.45
+  sgmii:
+    net_count: [4, 4]        # TX pair + RX pair
+    diff_pairs: [2, 2]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [SGMII, SD, SERDES, TXP, TXN, RXP, RXN]
+    base_confidence: 0.45
+  ddr:
+    net_count: [16, 240]     # a wide data/address bus, DQS strobes optional
+    diff_pairs: [0, 40]
+    topology: multidrop
+    pullups: optional
+    role_hints: [DQ, DQS, DM, ADDR, BA, RAS, CAS, WE, ODT, CKE, CK, DDR, DDR3, DDR4]
+    base_confidence: 0.45
+  sdio:
+    net_count: [4, 6]        # CLK, CMD, DAT0..DAT3
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: expected
+    role_hints: [SDIO, SD, MMC, CMD, DAT, CLK]
+    base_confidence: 0.45
+  qspi:
+    net_count: [6, 6]        # SCK, CS, IO0..IO3
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [QSPI, IO0, IO1, IO2, IO3, DQ0, DQ1, DQ2, DQ3, SCK, CS]
+    base_confidence: 0.45
+  jtag:
+    net_count: [4, 5]        # TCK, TMS, TDI, TDO, optional TRST
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [TCK, TMS, TDI, TDO, TRST, JTAG]
+    base_confidence: 0.5
+  i2s:
+    net_count: [3, 4]        # BCLK, LRCLK/WS, SD, optional MCLK
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [I2S, BCLK, LRCLK, LRCK, WS, SDIN, SDOUT, MCLK, SCK]
+    base_confidence: 0.4
+  rgmii:
+    net_count: [12, 12]      # TXD0-3, TX_CTL, TXC, RXD0-3, RX_CTL, RXC
+    diff_pairs: [0, 0]
+    topology: point_to_point
+    pullups: optional
+    role_hints: [RGMII, TXD, RXD, TXCTL, RXCTL, TXC, RXC, TXCLK, RXCLK, GTX]
+    base_confidence: 0.45
