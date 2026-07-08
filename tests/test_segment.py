@@ -107,6 +107,65 @@ def test_determinism_byte_identical(catalog: Catalog) -> None:
     assert segment(d, catalog).to_json() == segment(d, catalog).to_json()
 
 
+# --------------------------------------------------------------------------- #
+# STRUCTURAL interface_kind — the "known not guessed" classification layer.    #
+# The i2c bundle above already proves a protocol kind comes from STRUCTURE     #
+# (topology + role corroboration), not from a raw net label; here we assert    #
+# the classification carries a confidence + basis, that a connector segment    #
+# is recognized by pinout, and that a leaked net-label VALUE is DEMOTED.       #
+# --------------------------------------------------------------------------- #
+def test_protocol_kind_carries_confidence_and_basis(catalog: Catalog) -> None:
+    d = _two_cluster_design()
+    nc = classify_nets(d, catalog)
+    sda = nc["IIC_SDA"]
+    assert sda.kind == "interface" and sda.interface_kind == "i2c"
+    # reached structurally with net-name corroboration, and honestly scored.
+    assert sda.basis == "name_corroborated"
+    assert 0.0 < sda.confidence <= 0.95
+
+
+def test_connector_segment_classified_by_pinout(catalog: Catalog) -> None:
+    """A segment containing a standard connector (a 6-pin Pmod here) is
+    recognized by its pinout fingerprint: ``connector_kind`` is stamped, and
+    because nothing more specific is wired, it also fills ``interface_kind`` —
+    a connector kind, never a raw net label."""
+    comps = {r: ("", "") for r in ["J1", "U2", "R1", "R2"]}
+    nets = {
+        # J1 (a 1x6 Pmod) <-> U2 over 4 dedicated local nets carrying the Pmod
+        # SPI function names (not a full spi role bundle: no SCLK role token).
+        "PMOD_SS": [("J1", "1"), ("U2", "1")],
+        "PMOD_MOSI": [("J1", "2"), ("U2", "2")],
+        "PMOD_MISO": [("J1", "3"), ("U2", "3")],
+        "PMOD_SCK": [("J1", "4"), ("U2", "4")],
+        "PMOD_IO5": [("J1", "5"), ("R1", "1")],
+        "PMOD_IO6": [("J1", "6"), ("R2", "1")],
+        "L1": [("R1", "2"), ("U2", "5")],
+        "L2": [("R2", "2"), ("U2", "6")],
+    }
+    d = _design(comps, nets)
+    res = segment(d, catalog)
+    seg = next(s for s in res.segments if "J1" in s.component_refs)
+    assert seg.connector_kind == "pmod_1x6"
+    # nothing more specific is wired -> the connector fills interface_kind too.
+    assert seg.interface_kind == "pmod_1x6"
+    assert seg.provenance["connector"]["ref"] == "J1"
+
+
+def test_net_label_value_is_demoted_never_the_kind(catalog: Catalog) -> None:
+    """The root fix: a ``net_label`` marks its net as an interface CUT, but its
+    VALUE (``pf_hpoutclk1`` — the kind of string that fragmented the corpus) is
+    NEVER promoted to ``interface_kind``. The kind stays a generic ``signal``."""
+    comps = {"U1": ("", ""), "U2": ("", "")}
+    nets = {"WEIRD": [("U1", "1"), ("U2", "1")], "L": [("U1", "2"), ("U2", "2")]}
+    d = _design(comps, nets)
+    lbl = LabelClaim(kind="net_label", value="PF_HPOUTCLK1", net="WEIRD")
+    nc = classify_nets(d, catalog, labels=[lbl])
+    assert nc["WEIRD"].kind == "interface"  # still a cut line
+    assert nc["WEIRD"].interface_kind == "signal"  # demoted — NOT the label value
+    assert nc["WEIRD"].interface_kind != "pf_hpoutclk1"
+    assert nc["WEIRD"].basis == "label_hint"
+
+
 def test_rail_net_does_not_merge_clusters(catalog: Catalog) -> None:
     """A GND net touching every component must NOT collapse the two clusters."""
     d = _two_cluster_design()
@@ -648,3 +707,68 @@ def test_polarfire_promote_closes_the_foundry_loop(tmp_path: Path, catalog: Cata
         before, design, tmp_path / "promoted2", board_hint="polarfire-discovery"
     )
     assert [p.read_text() for p in written] == [p.read_text() for p in written2]
+
+
+@pytest.mark.kicad
+@pytest.mark.slow
+@pytest.mark.skipif(_KICAD is None, reason="kicad-cli not on PATH")
+@pytest.mark.skipif(not _BRD.is_file(), reason="PolarFire .brd reference absent")
+def test_polarfire_structural_interface_and_connector_classification(
+    tmp_path: Path, catalog: Catalog
+) -> None:
+    """THE KNOWN-NOT-GUESSED PAYOFF on the real PolarFire Discovery board: its
+    ecosystem connectors are recognized by PINOUT fingerprint (RPi-40 header,
+    MIPI CSI camera FFC) — not by leaked ``pf_*`` net labels — and its protocol
+    segments carry a bounded, structural ``interface_kind``. The board's
+    connectors have their footprints dropped by the Allegro import, so this also
+    exercises the footprint-absent honesty gate: an ethernet magjack and a USB-C
+    receptacle (same pin counts as seeded connectors) must NOT false-match."""
+    import collections
+
+    out_pcb = tmp_path / "pf.kicad_pcb"
+    proc = subprocess.run(
+        ["kicad-cli", "pcb", "import", "--format", "auto", "-o", str(out_pcb), str(_BRD)],
+        capture_output=True,
+        text=True,
+        timeout=420,
+    )
+    if not out_pcb.is_file():
+        pytest.skip(f"kicad-cli import failed: {(proc.stderr or proc.stdout).strip()}")
+    design = _design_netlist_from_pcb(out_pcb)
+
+    res = segment(design, catalog)
+    seg_of = {r: s for s in res.segments for r in s.component_refs}
+
+    # --- CONNECTORS recognized by pinout, keyed on the connector shape --- #
+    conn_hist = collections.Counter(
+        s.connector_kind for s in res.segments if s.connector_kind
+    )
+    ik_hist = collections.Counter(s.interface_kind for s in res.segments)
+    print(f"\n[polarfire structural] interface_kind: {dict(sorted(ik_hist.items(), key=str))}")
+    print(f"[polarfire structural] connector_kind: {dict(conn_hist)}")
+
+    # J10 is the RPi-40 expansion header; J11 is the MIPI CSI camera FFC.
+    assert seg_of["J10"].connector_kind == "rpi40", seg_of["J10"].connector_kind
+    assert seg_of["J11"].connector_kind == "mipi_csi", seg_of["J11"].connector_kind
+
+    # honesty gate: J3 (ethernet magjack) and J4 (USB-C) share pin counts with
+    # seeded connectors (16) but have different pinouts -> NOT force-matched.
+    assert seg_of["J3"].connector_kind is None
+    assert seg_of["J4"].connector_kind is None
+
+    # --- interface_kind is STRUCTURAL and bounded (a small, real vocabulary), #
+    #     never a raw net-label value like ``pf_hpoutclk1``. --- #
+    kinds = {k for k in ik_hist if k is not None}
+    assert "i2c" in kinds  # the CAM_I2C bus, classified by role topology
+    assert kinds <= {
+        "i2c", "spi", "uart", "usb2", "can", "pcie", "sgmii", "ddr", "sdio",
+        "qspi", "jtag", "i2s", "rgmii", "diff_pair", "bus", "signal",
+        "gpio", "led", "display", "rpi40", "mikrobus", "mipi_csi", "mipi_dsi",
+    }, kinds
+    # every kind is short & bounded — never a long vendor net-name like
+    # ``pf_hpoutclk1`` or ``vsc8662_refclk`` (the corpus-fragmentation signature).
+    for k in kinds:
+        assert len(k) <= 12 and not k.startswith(("pf_", "vsc")), k
+
+    # determinism on the real board (connector pass included).
+    assert segment(design, catalog).to_json() == res.to_json()

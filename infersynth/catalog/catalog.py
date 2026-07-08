@@ -21,11 +21,15 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from infersynth.catalog.interfaces import InterfaceDef, InterfacesError, load_interfaces
 from infersynth.catalog.loader import CellPackage, CellPackageError, load_cell
 from infersynth.catalog.taxonomy import TaxonomyError, load_taxonomy
+
+if TYPE_CHECKING:
+    from infersynth.recognize.connectors import ConnectorSignature
+    from infersynth.recognize.interface_signatures import InterfaceSignature
 
 __all__ = ["Catalog", "CatalogError", "IdiomCollision"]
 
@@ -146,6 +150,17 @@ class Catalog:
         #: (bundles)"), threaded through to every cell the same way taxonomy
         #: is; empty when the catalog has no interfaces.yaml.
         self.interfaces: dict[str, InterfaceDef] = {}
+        #: REVERSE protocol topological signatures (interface_signatures.yaml) —
+        #: the "known not guessed" structural classifier for standard protocol
+        #: bundles (spi/i2c/usb2/pcie/…). Empty when the catalog has none. Kept
+        #: separate from ``interfaces`` so the forward ``mates()`` path is
+        #: untouched. See infersynth/recognize/interface_signatures.py.
+        self.interface_signatures: dict[str, InterfaceSignature] = {}
+        #: Ecosystem connector pinout signatures (connectors.yaml) — the
+        #: "known not guessed" structural classifier for standard connectors
+        #: (rpi40/mikrobus/mipi_csi/…). Empty when the catalog has none. See
+        #: infersynth/recognize/connectors.py.
+        self.connectors: dict[str, ConnectorSignature] = {}
         #: subsystem-cell tier (docs/HIERARCHICAL_RECOGNITION.md): name ->
         #: SubsystemCell, discovered from ``catalog/subsystems/`` (interface +
         #: composition packages, distinct from small ``cell.yaml`` cells).
@@ -187,6 +202,32 @@ class Catalog:
             except InterfacesError as exc:
                 diags.append(str(exc))
         catalog.interfaces = interfaces or {}
+
+        # REVERSE structural signatures (protocol topological + connector pinout)
+        # — the "known not guessed" classification layer. Loaded lazily to avoid
+        # a catalog<->recognize import cycle (mirrors the subsystems pass below).
+        from infersynth.recognize.connectors import (
+            ConnectorsError,
+            load_connectors,
+        )
+        from infersynth.recognize.interface_signatures import (
+            InterfaceSignaturesError,
+            load_interface_signatures,
+        )
+
+        sig_path = root / "interface_signatures.yaml"
+        if sig_path.is_file():
+            try:
+                catalog.interface_signatures = load_interface_signatures(sig_path)
+            except InterfaceSignaturesError as exc:
+                diags.append(str(exc))
+
+        conn_path = root / "connectors.yaml"
+        if conn_path.is_file():
+            try:
+                catalog.connectors = load_connectors(conn_path)
+            except ConnectorsError as exc:
+                diags.append(str(exc))
 
         subsystems_dir = root / _SUBSYSTEMS_DIRNAME
         subdirs = sorted(

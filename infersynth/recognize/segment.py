@@ -217,6 +217,12 @@ class Segment:
     internal_nets: tuple[str, ...]
     boundary: tuple[BoundaryPin, ...]
     interface_kind: str | None = None
+    #: The ecosystem connector this segment IS, when it contains a recognized
+    #: standard connector (``rpi40``/``mikrobus``/``mipi_csi``…). This classifies
+    #: the CONNECTOR itself (recognized by pinout fingerprint), independently of
+    #: ``interface_kind`` (what is wired behind its pins). See
+    #: infersynth/recognize/connectors.py.
+    connector_kind: str | None = None
     label: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
@@ -227,6 +233,7 @@ class Segment:
             "internal_nets": list(self.internal_nets),
             "boundary": [b.to_dict() for b in self.boundary],
             "interface_kind": self.interface_kind,
+            "connector_kind": self.connector_kind,
             "label": self.label,
             "provenance": self.provenance,
         }
@@ -306,10 +313,20 @@ class SegmentationResult:
 @dataclass(frozen=True)
 class NetClass:
     """The classification of one net: ``kind`` in {rail, interface, local} and,
-    for an interface, its ``interface_kind`` (e.g. ``i2c``, ``ddr``)."""
+    for an interface, its ``interface_kind`` (e.g. ``i2c``, ``ddr``).
+
+    ``confidence`` and ``basis`` describe HOW an interface kind was reached —
+    ``"topology"`` (structure alone), ``"name_corroborated"`` (structure + net
+    name role hints), ``"name_hint"`` (a wide vendor bus keyed on a bounded
+    net-name keyword, e.g. ``ddr``/``led``), ``"label_hint"`` (a demoted PDF net
+    label — marks a cut but never names the kind), or ``"generic"`` (an honest
+    ``bus``/``signal``/``diff_pair`` fallback). This is what keeps
+    ``interface_kind`` structural and label-independent."""
 
     kind: str
     interface_kind: str | None = None
+    confidence: float = 0.0
+    basis: str | None = None
 
 
 def _net_degree(pins: list[tuple[str, str]]) -> int:
@@ -341,36 +358,37 @@ def _detect_bus_bundles(names: list[str]) -> dict[str, str]:
     return out
 
 
-def _detect_diff_pairs(names: list[str]) -> dict[str, str]:
-    """Differential-pair detection: net -> "diff_pair" for ``X_P``/``X_N`` (and
-    ``XP``/``XN``) pairs sharing a >=2-char base."""
+def _diff_pair_groups(names: list[str]) -> list[list[str]]:
+    """Differential-pair GROUPING: return each ``X_P``/``X_N`` (or ``XP``/``XN``)
+    pair (>=2-char base) as a 2-net bundle, sorted deterministically. The KIND is
+    NOT decided here — :func:`classify_interface` classifies each bundle
+    structurally (usb2/can/pcie/sgmii or a generic ``diff_pair``)."""
     halves: dict[str, dict[str, str]] = {}
     for name in names:
         m = _DIFF_RE.match(name)
         if m and len(m.group(1)) >= 2:
             halves.setdefault(m.group(1), {})[m.group(2)] = name
-    out: dict[str, str] = {}
-    for _base, d in halves.items():
+    groups: list[list[str]] = []
+    for base in sorted(halves):
+        d = halves[base]
         if "P" in d and "N" in d:
-            out[d["P"]] = "diff_pair"
-            out[d["N"]] = "diff_pair"
-    return out
+            groups.append(sorted((d["P"], d["N"])))
+    return groups
 
 
-def _detect_protocol_bundles(names: list[str], catalog: Catalog) -> dict[str, str]:
-    """``interfaces.yaml`` role-signature detection: net -> interface name.
-
-    For every interface def, group nets that carry one of its role tokens by the
-    base name (the net name with that role token removed). A base whose present
-    role tokens cover all the interface's *required* roles is a bundle; its nets
-    take the interface name as ``interface_kind``. The generic single-wire
-    ``analog`` interface is skipped (its lone ``SIG`` role would match far too
-    much). Multi-role interfaces (>=2 roles) only, so a stray token can't forge
-    a bundle.
-    """
-    out: dict[str, str] = {}
+def _protocol_role_groups(names: list[str], catalog: Catalog) -> list[list[str]]:
+    """``interfaces.yaml`` role-signature GROUPING: return each net bundle whose
+    present role tokens cover an interface's *required* roles, as a sorted list
+    of nets. The KIND is NOT taken from the interface name here —
+    :func:`classify_interface` classifies each bundle STRUCTURALLY (the role
+    tokens only served to find the bundle, and later corroborate). The generic
+    single-wire ``analog`` interface is skipped; multi-role interfaces only, so a
+    stray token can't forge a bundle. Bundles are de-duplicated (a set of nets is
+    emitted once) and returned in sorted order for determinism."""
     tokens_by_net = {n: set(_TOKEN_SPLIT.split(n.upper())) for n in names}
-    for iface_name, idef in sorted(catalog.interfaces.items()):
+    seen: set[frozenset[str]] = set()
+    result: list[list[str]] = []
+    for _iface_name, idef in sorted(catalog.interfaces.items()):
         roles = idef.roles
         if len(roles) < 2:
             continue  # skip degenerate single-wire interfaces (analog)
@@ -378,11 +396,9 @@ def _detect_protocol_bundles(names: list[str], catalog: Catalog) -> dict[str, st
         if not required:
             continue
         role_tokens = {r.upper() for r in roles}
-        # group nets by base (name minus the matched role token) -> {role: net}
         groups: dict[str, dict[str, str]] = {}
         for name in names:
-            toks = tokens_by_net[name]
-            hit = role_tokens & toks
+            hit = role_tokens & tokens_by_net[name]
             if not hit:
                 continue
             for role_tok in hit:
@@ -390,9 +406,12 @@ def _detect_protocol_bundles(names: list[str], catalog: Catalog) -> dict[str, st
                 groups.setdefault(base, {})[role_tok] = name
         for _base, present in groups.items():
             if {r.upper() for r in required} <= set(present):
-                for name in present.values():
-                    out.setdefault(name, iface_name)
-    return out
+                bundle = frozenset(present.values())
+                if bundle not in seen:
+                    seen.add(bundle)
+                    result.append(sorted(bundle))
+    result.sort()
+    return result
 
 
 def classify_nets(
@@ -401,10 +420,34 @@ def classify_nets(
     """Classify every net of *design* as rail / interface / local.
 
     Rails first (a power net that is also part of a bus name stays a rail — a
-    rail never binds a cluster). Interface bundles (bus, diff pair, protocol
-    signature, and any net a ``net_label``/``protocol`` label marks) next. All
-    other nets are local clustering edges.
+    rail never binds a cluster). Then interface bundles, whose ``interface_kind``
+    comes from STRUCTURE, never from a raw net label:
+
+      * **differential-pair** and **protocol-role** bundles are handed to
+        :func:`~infersynth.recognize.interface_signatures.classify_interface`,
+        which fingerprints the bundle topologically (cardinality, diff-pair
+        count, multidrop vs point-to-point, pull-ups) and emits a standard
+        protocol kind (spi/i2c/usb2/pcie/…) or an honest generic
+        (``diff_pair``/``bus``/``signal``) — with net-name role tokens only
+        CORROBORATING. When the catalog ships no ``interface_signatures.yaml``
+        this degrades to a generic ``diff_pair``/``bus`` (never a guess).
+      * **indexed vendor buses** keep the bounded net-name keyword kind
+        (``ddr``/``sdio``/``led``/…, :func:`_bus_kind`) — these are wide,
+        board-specific buses whose standard name legitimately rides on a
+        corroborating net-name token, and the vocabulary is small and fixed.
+
+    ``net_label`` / ``protocol`` LABELS are DEMOTED: a label marks its net as an
+    interface CUT (so it stops a cluster), but its VALUE never becomes the kind —
+    the kind is ``signal`` (generic) unless the net is already in a structurally
+    classified bundle. This is the root fix for net-label fragmentation.
+
+    All other nets are local clustering edges.
     """
+    from infersynth.recognize.interface_signatures import (
+        GENERIC_CONFIDENCE,
+        classify_interface,
+    )
+
     names = sorted(design.nets)
     rails = {
         n
@@ -412,30 +455,48 @@ def classify_nets(
         if _POWER_RE.search(n) or _VOLT_RE.search(n) or _net_degree(design.nets[n]) >= RAIL_DEGREE
     }
     non_rail = [n for n in names if n not in rails]
-    iface: dict[str, str] = {}
-    for detector in (_detect_bus_bundles(non_rail), _detect_diff_pairs(non_rail)):
-        for n, kind in detector.items():
-            iface.setdefault(n, kind)
-    for n, kind in _detect_protocol_bundles(non_rail, catalog).items():
-        iface.setdefault(n, kind)
-    # label hints: a net_label / protocol label marks its net as an interface cut
+    rail_fs = frozenset(rails)
+    sigs = catalog.interface_signatures
+
+    # net -> (kind, confidence, basis); first assignment wins (setdefault),
+    # ordered most-specific-first: diff pairs, protocol-role bundles, then buses.
+    iface: dict[str, tuple[str, float, str]] = {}
+
+    def _assign(bundle: list[str], kind: str, conf: float, basis: str) -> None:
+        for n in bundle:
+            iface.setdefault(n, (kind, conf, basis))
+
+    def _classify(bundle: list[str], fallback: str) -> None:
+        if sigs:
+            m = classify_interface(bundle, design, sigs, rails=rail_fs)
+            _assign(bundle, m.kind, m.confidence, m.basis)
+        else:
+            _assign(bundle, fallback, GENERIC_CONFIDENCE, "generic")
+
+    for group in _diff_pair_groups(non_rail):
+        _classify(group, "diff_pair")
+    for group in _protocol_role_groups(non_rail, catalog):
+        _classify(group, "bus")
+    # indexed vendor buses: bounded net-name keyword kind (a corroborating hint,
+    # small fixed vocabulary — never a raw net label).
+    for name, kind in _detect_bus_bundles(non_rail).items():
+        iface.setdefault(name, (kind, GENERIC_CONFIDENCE, "name_hint"))
+    # DEMOTED label cut: mark the net as an interface boundary, but the kind is
+    # generic ``signal`` — the label VALUE is never promoted to interface_kind.
     for lc in labels or ():
         if lc.kind in ("net_label", "protocol") and lc.net and lc.net not in rails:
-            iface.setdefault(lc.net, _label_kind(lc))
+            iface.setdefault(lc.net, ("signal", GENERIC_CONFIDENCE, "label_hint"))
 
     out: dict[str, NetClass] = {}
     for n in names:
         if n in rails:
             out[n] = NetClass("rail")
         elif n in iface:
-            out[n] = NetClass("interface", iface[n])
+            kind, conf, basis = iface[n]
+            out[n] = NetClass("interface", kind, confidence=conf, basis=basis)
         else:
             out[n] = NetClass("local")
     return out
-
-
-def _label_kind(lc: LabelClaim) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", lc.value.lower()).strip("_") or "labeled"
 
 
 class _Union:
@@ -648,12 +709,92 @@ def segment(
             segments, residual, design, netcls
         )
 
+    if catalog.connectors:
+        segments = _apply_connectors(segments, design, catalog)
+
     return SegmentationResult(
         segments=tuple(segments),
         residual=residual,
         residual_tags=residual_tags,
         absorbed_count=absorbed_count,
     )
+
+
+#: interface_kind values a connector match is allowed to FILL (nothing more
+#: specific is known). A protocol/vendor-bus kind already present describes what
+#: is wired behind the connector and is kept; ``connector_kind`` is recorded
+#: alongside either way (see :func:`_apply_connectors`).
+_GENERIC_FILLABLE_KINDS = frozenset({None, "bus", "signal"})
+
+
+def _apply_connectors(
+    segments: list[Segment], design: DesignNetlist, catalog: Catalog
+) -> list[Segment]:
+    """Recognize standard ecosystem connectors in each segment and stamp
+    ``connector_kind`` (rpi40/mikrobus/mipi_csi/…), recognized by PINOUT
+    fingerprint — pin count + footprint + standardized pin->function net-name map
+    (:func:`infersynth.recognize.connectors.classify_connector`).
+
+    A connector classifies the CONNECTOR itself, a distinct axis from
+    ``interface_kind`` (what is wired behind its pins). When a segment carries no
+    more-specific interface kind (``None``/``bus``/``signal``), the connector
+    kind FILLS ``interface_kind`` so the connector surfaces there too; when a
+    protocol/vendor-bus kind is already present, that is kept (it describes the
+    wiring) and the connector is still recorded in ``connector_kind``.
+
+    Pure + deterministic: connector-sized components (>= 4 connected pins) are
+    considered in sorted-ref order; the best match per segment wins by
+    (confidence desc, kind asc). Never changes membership or any other field.
+    """
+    from infersynth.recognize.connectors import classify_connector
+
+    # one pass over nets -> per-ref connected pin count, so we only run the
+    # (rescanning) classifier on connector-sized components.
+    pin_count: dict[str, set[str]] = {}
+    for _name, pins in design.nets.items():
+        for ref, pin in pins:
+            pin_count.setdefault(ref, set()).add(pin)
+    connector_sized = {ref for ref, ps in pin_count.items() if len(ps) >= 4}
+
+    out: list[Segment] = []
+    for seg in segments:
+        best: tuple[float, str, str] | None = None  # (confidence, kind, ref)
+        for ref in sorted(seg.component_refs):
+            if ref not in connector_sized:
+                continue
+            m = classify_connector(ref, design, catalog.connectors)
+            if m.kind is None:
+                continue
+            cand = (m.confidence, m.kind, ref)
+            if best is None or (-cand[0], cand[1], cand[2]) < (-best[0], best[1], best[2]):
+                best = cand
+        if best is None:
+            out.append(seg)
+            continue
+        conf, ckind, cref = best
+        new_iface = (
+            ckind if seg.interface_kind in _GENERIC_FILLABLE_KINDS else seg.interface_kind
+        )
+        new_prov = dict(seg.provenance)
+        new_prov["connector"] = {
+            "kind": ckind,
+            "ref": cref,
+            "confidence": conf,
+            "filled_interface_kind": new_iface != seg.interface_kind,
+        }
+        out.append(
+            Segment(
+                id=seg.id,
+                component_refs=seg.component_refs,
+                internal_nets=seg.internal_nets,
+                boundary=seg.boundary,
+                interface_kind=new_iface,
+                connector_kind=ckind,
+                label=seg.label,
+                provenance=new_prov,
+            )
+        )
+    return out
 
 
 def _block_label_index(labels: list[LabelClaim] | None) -> dict[frozenset[str], str]:
