@@ -1,0 +1,91 @@
+# Ecosystem CONNECTOR pinout signatures (the second "known not guessed" tier).
+# A standard connector — RPi-40 header, mikroBUS socket, MIPI CSI/DSI FFC,
+# Pmod, Qwiic/STEMMA, Arduino Uno shield, FMC — is a SPEC: a fixed pin count /
+# footprint plus a standardized pin->function map. What is wired behind each pin
+# varies board-to-board, so a connector match classifies the CONNECTOR itself
+# (`rpi40`, `mikrobus`, `mipi_csi`), NOT the protocol behind it. Recognition is
+# by pin-count/footprint first; when net names are present the standardized
+# function map corroborates and raises confidence, and (when the footprint is
+# unknown — e.g. an imported .brd that dropped footprints) a minimum of
+# corroborating function tokens is REQUIRED so an ambiguous pin count like 16
+# (mikroBUS) or 40 (RPi) cannot false-match a same-sized but different connector
+# (a 16-pin USB-C, a 40-pin generic header). See
+# infersynth/recognize/connectors.py `classify_connector`.
+#
+# Fields per connector:
+#   pins:            [lo, hi]  inclusive pin-count range (shield/mount pins let
+#                              a nominal 15-pin MIPI FFC read as 15..17, etc.).
+#   footprint_hints: substrings that, if present in the component footprint,
+#                    strongly corroborate (e.g. "2x20", "JST_SH", "PinHeader").
+#   function_hints:  standardized pin-function tokens; matched as whole tokens
+#                    or indexed members against the connector's net names.
+#   min_corroboration: how many distinct function_hints must appear in the net
+#                    names when the footprint gives no hint (honesty gate — a
+#                    pin-count-only match with no corroboration is NOT forced).
+#   base_confidence: confidence of a pin-count(+footprint) match before net-name
+#                    function corroboration raises it.
+version: 1
+connectors:
+  rpi40:
+    pins: [40, 40]
+    footprint_hints: [2x20, 2X20, PinHeader_2x20, RPi, RaspberryPi]
+    function_hints: [SDA, SCL, MOSI, MISO, SCLK, SCK, TXD, RXD, GPIO, GCLK, CE0, CE1, ID_SD, ID_SC]
+    min_corroboration: 3
+    base_confidence: 0.5
+  rpi26:
+    pins: [26, 26]
+    footprint_hints: [2x13, 2X13, PinHeader_2x13, RPi, RaspberryPi]
+    function_hints: [SDA, SCL, MOSI, MISO, SCLK, SCK, TXD, RXD, GPIO, GCLK, CE0, CE1]
+    min_corroboration: 3
+    base_confidence: 0.5
+  mikrobus:
+    pins: [16, 16]
+    footprint_hints: [mikroBUS, MikroBus, 1x8, 2x8]
+    function_hints: [AN, RST, CS, SCK, MISO, MOSI, PWM, INT, RX, TX, SCL, SDA]
+    min_corroboration: 4
+    base_confidence: 0.45
+  mipi_csi:
+    pins: [15, 22]
+    footprint_hints: [FFC, FPC, 0.5mm, MIPI, CSI]
+    # CSI = camera receive lanes: RX diff pairs + a camera control i2c. Tokens
+    # seen on real headers: MIPI, CAM, RX, CKP/CKN (clock lane), RXP/RXN.
+    function_hints: [MIPI, CSI, CAM, DPHY, RX, RXP, RXN, CKP, CKN, D0P, D0N, D1P, D1N]
+    min_corroboration: 2
+    base_confidence: 0.5
+  mipi_dsi:
+    pins: [15, 22]
+    footprint_hints: [FFC, FPC, 0.5mm, MIPI, DSI]
+    # DSI = display transmit lanes: TX diff pairs, LCD/DISP naming.
+    function_hints: [MIPI, DSI, LCD, DISP, TX, TXP, TXN, CKP, CKN, D0P, D0N, D1P, D1N]
+    min_corroboration: 2
+    base_confidence: 0.5
+  pmod_1x6:
+    pins: [6, 6]
+    footprint_hints: [Pmod, PMOD, 1x6, 1X6, PinHeader_1x6]
+    function_hints: [PMOD, IO1, IO2, IO3, IO4, SS, MOSI, MISO, SCK]
+    min_corroboration: 2
+    base_confidence: 0.4
+  pmod_2x6:
+    pins: [12, 12]
+    footprint_hints: [Pmod, PMOD, 2x6, 2X6, PinHeader_2x6]
+    function_hints: [PMOD, IO1, IO2, IO3, IO4, IO5, IO6, IO7, IO8, SS, MOSI, MISO, SCK]
+    min_corroboration: 2
+    base_confidence: 0.4
+  qwiic:
+    pins: [4, 4]
+    footprint_hints: [JST_SH, JST-SH, SH_1x4, Qwiic, QWIIC, STEMMA, 1x4-1MP]
+    function_hints: [SDA, SCL, QWIIC, STEMMA]
+    min_corroboration: 2
+    base_confidence: 0.45
+  arduino_uno_shield:
+    pins: [28, 32]
+    footprint_hints: [Arduino, ARDUINO, Uno, Shield]
+    function_hints: [A0, A1, A2, A3, A4, A5, D0, D1, IOREF, AREF, IORE, RESET]
+    min_corroboration: 4
+    base_confidence: 0.4
+  fmc_lpc:
+    pins: [160, 160]
+    footprint_hints: [FMC, ASP-134604, LPC]
+    function_hints: [FMC, LA, HA, DP0, CLK0, CLK1, PRSNT]
+    min_corroboration: 3
+    base_confidence: 0.45
