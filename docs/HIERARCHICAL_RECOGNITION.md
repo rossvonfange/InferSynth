@@ -42,15 +42,36 @@ What the PDF-schematic source produces and the segmenter consumes as *hints*
 (never as ground truth — connectivity is truth; labels guide the cut):
 ```
 LabelClaim = {
-  kind: "net_label" | "block" | "protocol",
-  value: str,            # e.g. "DDR4_DQ0", "LCD Header", "I2C"
+  kind: "net_label" | "block" | "protocol" | "net_role",
+  value: str,            # e.g. "DDR4_DQ0", "LCD Header", "I2C", "SPI0_MOSI"
   refs: list[str],       # component refs the label scopes (may be empty for a net_label)
-  net: str | None,       # net name if kind == net_label
+  net: str | None,       # net name if kind is net_label / protocol / net_role
   provenance: {source: "pdf_schematic", confidence: "high|med|low", page: int},
 }
 ```
 These fuse via `infersynth.claims` alongside `.brd`/IPC/BOM claims. The
 segmenter treats matching labels as strong same-cluster / cut-here signals.
+
+**`net_role` — symbol-derived functional pin roles (the label seam).** Allegro
+`.brd` import strips net-name roles, so on real vendor boards the structural
+fingerprints starve — no `MOSI`/`SDA`/`MDIO` tokens to corroborate — and every
+bundle falls to a generic `signal`/`bus`/`diff_pair`. A `net_role` claim
+`{kind: "net_role", value: "<FUNCTIONAL_NAME>", net: "<net>"}` asserts that
+`net` carries the functional role tokens in `value` (a pin-function name a
+downstream provider recovers by looking up each part's KiCad **symbol** and
+mapping its pin NUMBERS to functional pin NAMES). `value` is tokenized with the
+same splitter `classify_interface`/`classify_connector` use; multiple `net_role`
+labels per net union their tokens (a net touches several named pins). These
+tokens fold into the corroboration set as `_tokens(net_name) ∪ label_tokens[net]`
+in both the protocol classifier (`interface_signatures.classify_interface`) and
+the connector classifier (`connectors.classify_connector`), so a generically
+named bundle or a stripped-footprint connector gets NAMED. Honesty gate: labels
+only ADD corroboration tokens — they never relax the structural gate
+(net-count/diff-pair cardinality, topology, connector pin-count/`min_corroboration`).
+A label-only-corroborated match reports basis `label_corroborated` (distinct
+from `name_corroborated`) so provenance shows where the evidence came from. With
+no `net_role` labels the result is byte-identical to the pure-connectivity
+baseline.
 
 ## Contract 2 — the segment (segmenter output; recognizer/Loom input)
 

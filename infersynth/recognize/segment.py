@@ -176,12 +176,30 @@ _BUS_KIND_KEYWORDS = (
 
 @dataclass(frozen=True)
 class LabelClaim:
-    """Contract 1 — a PDF/schematic label the segmenter consumes as a *hint*.
+    """Contract 1 — a PDF/schematic/symbol label the segmenter consumes as a
+    *hint*.
 
-    ``kind`` is ``"net_label"``, ``"block"``, or ``"protocol"``. ``value`` is
-    the human string (``"DDR4_DQ0"``, ``"LCD Header"``, ``"I2C"``). ``refs`` are
-    the component refs the label scopes (empty for a bare net label). ``net`` is
-    the net name for a ``net_label``. Labels never override connectivity.
+    ``kind`` is one of:
+
+    * ``"net_label"`` — a human net label (``value``, e.g. ``"DDR4_DQ0"``) on
+      ``net``. DEMOTED to a generic ``signal`` interface CUT (its value never
+      becomes the interface kind).
+    * ``"block"`` — a PDF block naming a set of ``refs`` (biases them
+      same-cluster).
+    * ``"protocol"`` — a protocol label on ``net``; also a demoted CUT.
+    * ``"net_role"`` — a symbol-derived FUNCTIONAL PIN-ROLE name that ``net``
+      carries (``value`` e.g. ``"SPI0_MOSI"``, ``"MDIO"``, ``"MIPI_CSI0_D0_P"``,
+      ``"RPI_GPIO2_SDA"``). Its tokens (split by the same ``_tokens`` splitter
+      the protocol/connector classifiers use) CORROBORATE structural interface
+      and connector signatures — letting a generically-named bundle (``N$1234``)
+      or a stripped-footprint connector be NAMED when the ``.brd`` import starved
+      the net names of role tokens. MULTIPLE ``net_role`` labels per net are
+      allowed (a net touches several named pins) — their tokens union. Labels
+      only ADD corroboration; they never relax the structural gate.
+
+    ``value`` is the human/functional string. ``refs`` are the component refs the
+    label scopes (empty for a bare net label). ``net`` is the net name for a
+    ``net_label``/``protocol``/``net_role``. Labels never override connectivity.
     """
 
     kind: str
@@ -414,6 +432,26 @@ def _protocol_role_groups(names: list[str], catalog: Catalog) -> list[list[str]]
     return result
 
 
+def _net_role_tokens(labels: list[LabelClaim] | None) -> dict[str, set[str]]:
+    """Build a ``net -> {role_token}`` map from the ``net_role`` labels.
+
+    Each ``net_role`` label asserts that its ``net`` carries the functional role
+    tokens in ``value`` (a symbol-derived pin-function name). ``value`` is split
+    with the SAME ``_tokens`` splitter :func:`classify_interface` /
+    :func:`classify_connector` use, and MULTIPLE ``net_role`` labels on one net
+    union their tokens (a net touches several named pins). Returns ``{}`` when
+    there are no ``net_role`` labels — the pure-connectivity baseline is
+    unchanged. These tokens CORROBORATE structural signatures; they never gate.
+    """
+    from infersynth.recognize.interface_signatures import _tokens
+
+    out: dict[str, set[str]] = {}
+    for lc in labels or ():
+        if lc.kind == "net_role" and lc.net and lc.value:
+            out.setdefault(lc.net, set()).update(_tokens(lc.value))
+    return out
+
+
 def classify_nets(
     design: DesignNetlist, catalog: Catalog, labels: list[LabelClaim] | None = None
 ) -> dict[str, NetClass]:
@@ -441,6 +479,15 @@ def classify_nets(
     the kind is ``signal`` (generic) unless the net is already in a structurally
     classified bundle. This is the root fix for net-label fragmentation.
 
+    ``net_role`` LABELS (symbol-derived functional pin names) do NOT cut or
+    rename on their own — instead their tokens are folded into the
+    :func:`classify_interface` corroboration (``_tokens(net_name) ∪ role
+    tokens``), so a structurally-valid but generically-named bundle (``N$1234``)
+    gets its standard protocol NAME when the labels supply the role tokens. This
+    is the corroboration path for boards whose ``.brd`` import stripped net-name
+    roles. A ``net_role`` label that corroborates no structurally-matching
+    signature leaves the net generic — the honesty gate is never bypassed.
+
     All other nets are local clustering edges.
     """
     from infersynth.recognize.interface_signatures import (
@@ -448,6 +495,7 @@ def classify_nets(
         classify_interface,
     )
 
+    label_tokens = _net_role_tokens(labels)
     names = sorted(design.nets)
     rails = {
         n
@@ -468,7 +516,9 @@ def classify_nets(
 
     def _classify(bundle: list[str], fallback: str) -> None:
         if sigs:
-            m = classify_interface(bundle, design, sigs, rails=rail_fs)
+            m = classify_interface(
+                bundle, design, sigs, rails=rail_fs, label_tokens=label_tokens or None
+            )
             _assign(bundle, m.kind, m.confidence, m.basis)
         else:
             _assign(bundle, fallback, GENERIC_CONFIDENCE, "generic")
@@ -710,7 +760,9 @@ def segment(
         )
 
     if catalog.connectors:
-        segments = _apply_connectors(segments, design, catalog)
+        segments = _apply_connectors(
+            segments, design, catalog, label_tokens=_net_role_tokens(labels) or None
+        )
 
     return SegmentationResult(
         segments=tuple(segments),
@@ -728,7 +780,11 @@ _GENERIC_FILLABLE_KINDS = frozenset({None, "bus", "signal"})
 
 
 def _apply_connectors(
-    segments: list[Segment], design: DesignNetlist, catalog: Catalog
+    segments: list[Segment],
+    design: DesignNetlist,
+    catalog: Catalog,
+    *,
+    label_tokens: dict[str, set[str]] | None = None,
 ) -> list[Segment]:
     """Recognize standard ecosystem connectors in each segment and stamp
     ``connector_kind`` (rpi40/mikrobus/mipi_csi/…), recognized by PINOUT
@@ -762,7 +818,9 @@ def _apply_connectors(
         for ref in sorted(seg.component_refs):
             if ref not in connector_sized:
                 continue
-            m = classify_connector(ref, design, catalog.connectors)
+            m = classify_connector(
+                ref, design, catalog.connectors, label_tokens=label_tokens
+            )
             if m.kind is None:
                 continue
             cand = (m.confidence, m.kind, ref)
