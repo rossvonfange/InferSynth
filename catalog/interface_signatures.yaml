@@ -107,6 +107,16 @@ signatures:
     pullups: optional
     role_hints: [TCK, TMS, TDI, TDO, TRST, JTAG]
     base_confidence: 0.5
+  mdio:
+    net_count: [2, 2]        # MDC (clock) + MDIO (data) — the PHY management bus
+    diff_pairs: [0, 0]
+    topology: multidrop      # one MAC drives up to 32 PHYs on the shared MDIO
+    pullups: optional
+    role_hints: [MDIO, MDC, MDINT, MDI, SMI]   # net-name/pin-role tokens; NEVER
+                                               # the emitted kind. Disambiguates
+                                               # the 2-wire non-diff shape it
+                                               # shares with i2c/uart.
+    base_confidence: 0.5
   i2s:
     net_count: [3, 4]        # BCLK, LRCLK/WS, SD, optional MCLK
     diff_pairs: [0, 0]

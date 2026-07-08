@@ -285,8 +285,10 @@ class InterfaceMatch:
     kind: str
     confidence: float
     #: how the kind was reached: ``"topology"`` (structure alone, unambiguous),
-    #: ``"name_corroborated"`` (structure + net-name role hints), or
-    #: ``"generic"`` (honest fallback — no/ambiguous signature match).
+    #: ``"name_corroborated"`` (structure + net-name role hints),
+    #: ``"label_corroborated"`` (structure + externally-supplied ``net_role``
+    #: label tokens that net names alone did NOT supply — see ``label_tokens``),
+    #: or ``"generic"`` (honest fallback — no/ambiguous signature match).
     basis: str
     fingerprint: BundleFingerprint = field(
         default_factory=lambda: BundleFingerprint(0, 0, 0, False)
@@ -330,6 +332,7 @@ def classify_interface(
     *,
     rails: frozenset[str] | None = None,
     use_names: bool = True,
+    label_tokens: dict[str, set[str]] | None = None,
 ) -> InterfaceMatch:
     """Classify a bundle of nets into a standard protocol kind + confidence.
 
@@ -339,6 +342,19 @@ def classify_interface(
     raising the score and, critically, disambiguating two structurally-identical
     protocols. The emitted kind is always a SIGNATURE NAME (spi/i2c/usb2/…) or an
     honest generic (``diff_pair``/``bus``/``signal``) — NEVER a raw net-label.
+
+    ``label_tokens`` is an optional ``net -> {role_token}`` map of
+    externally-supplied functional role tokens (a downstream provider recovers
+    them from each part's KiCad SYMBOL when the ``.brd`` import stripped the
+    net-name roles). For every net in the bundle the corroboration token set is
+    ``_tokens(net_name) ∪ label_tokens[net]`` — so labels can NAME an otherwise
+    generically-named bundle. Labels only ADD corroboration tokens; they NEVER
+    relax the structural gate (``_structural_match``): a label whose tokens
+    corroborate a signature the STRUCTURE contradicts cannot force that match. A
+    match won on tokens net names alone did not supply is reported with basis
+    ``"label_corroborated"`` (vs ``"name_corroborated"``) so provenance shows
+    WHERE the evidence came from. With ``label_tokens=None`` this is byte-
+    identical to the pure net-name path.
 
     Determinism: signatures are considered in sorted-name order and every tie is
     broken lexicographically, so two runs are byte-identical.
@@ -353,29 +369,43 @@ def classify_interface(
     if not matched:
         return InterfaceMatch(_generic_kind(fp), GENERIC_CONFIDENCE, "generic", fp, ())
 
-    tokens: set[str] = set()
+    # name_tokens come from the net names; tokens folds in the externally-supplied
+    # net_role label tokens on top. name_tokens is kept so a corroborated winner
+    # can be attributed: names-only -> "name_corroborated", label-supplied ->
+    # "label_corroborated".
+    name_tokens: set[str] = set()
     if use_names:
         for n in bundle:
-            tokens |= _tokens(n)
+            name_tokens |= _tokens(n)
+    tokens = set(name_tokens)
+    if label_tokens:
+        for n in bundle:
+            tokens |= label_tokens.get(n, set())
 
     scored: list[tuple[float, int, str]] = []  # (final_score, n_hits, kind)
     for name, sig in matched:
         base = _soft_score(sig, fp)
-        n_hits = sum(1 for h in sig.role_hints if _hint_hits(h, tokens)) if use_names else 0
+        n_hits = sum(1 for h in sig.role_hints if _hint_hits(h, tokens)) if tokens else 0
         final = base + min(n_hits * CORROBORATION_STEP, CORROBORATION_CAP)
         scored.append((final, n_hits, name))
     cand_names = tuple(name for _s, _h, name in sorted(scored, key=lambda t: t[2]))
 
     corroborated = [s for s in scored if s[1] > 0]
     if corroborated:
-        # net names pin down the protocol: MOST role hits wins (the most specific
-        # match), then score, then lexical — so a deep, specific corroboration
-        # (qspi's QSPI+IO0..3) beats a shallow overlap (spi's SCK+CS).
+        # net names (∪ labels) pin down the protocol: MOST role hits wins (the
+        # most specific match), then score, then lexical — so a deep, specific
+        # corroboration (qspi's QSPI+IO0..3) beats a shallow overlap (spi's
+        # SCK+CS).
         corroborated.sort(key=lambda t: (-t[1], -t[0], t[2]))
-        best_score, _best_hits, best_kind = corroborated[0]
+        best_score, best_hits, best_kind = corroborated[0]
+        # attribute the evidence: if net names ALONE corroborate the winner as
+        # strongly, it is a name match; otherwise the label tokens supplied the
+        # deciding role(s) -> label_corroborated (honest provenance).
+        name_hits = sum(1 for h in signatures[best_kind].role_hints if _hint_hits(h, name_tokens))
+        basis = "name_corroborated" if name_hits >= best_hits else "label_corroborated"
         return InterfaceMatch(
             best_kind, round(min(best_score, CONFIDENCE_CEILING), 4),
-            "name_corroborated", fp, cand_names,
+            basis, fp, cand_names,
         )
 
     # No name corroboration. If EXACTLY ONE signature matches the structure, that

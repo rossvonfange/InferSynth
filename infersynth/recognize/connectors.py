@@ -171,8 +171,10 @@ class ConnectorMatch:
 
     ``kind`` is a connector name (``rpi40``/``mikrobus``/``mipi_csi``…) or
     ``None`` when nothing matched confidently. ``basis`` records how it was
-    reached: ``"footprint"``, ``"pinout"`` (net-name function map), or
-    ``"none"``.
+    reached: ``"footprint"``, ``"pinout"`` (net-name function map),
+    ``"label_corroborated"`` (the pinout met ``min_corroboration`` only because
+    externally-supplied ``net_role`` label tokens supplied the deciding
+    functions — see ``label_tokens``), or ``"none"``.
     """
 
     kind: str | None
@@ -188,6 +190,7 @@ def classify_connector(
     connectors: dict[str, ConnectorSignature],
     *,
     use_names: bool = True,
+    label_tokens: dict[str, set[str]] | None = None,
 ) -> ConnectorMatch:
     """Classify a component as a standard ecosystem connector, or ``None``.
 
@@ -197,15 +200,31 @@ def classify_connector(
     must be present — otherwise the candidate is rejected (an ambiguous pin count
     is never force-matched). Deterministic: candidates considered in sorted-name
     order, ties broken lexically.
+
+    ``label_tokens`` is an optional ``net -> {role_token}`` map of
+    externally-supplied functional role tokens (recovered from each part's KiCad
+    SYMBOL when a ``.brd`` import stripped both footprints AND net-name roles).
+    For every net the connector touches the corroboration token set is
+    ``_tokens(net_name) ∪ label_tokens[net]`` — so a stripped-footprint connector
+    can meet ``min_corroboration`` via label tokens instead of net-name tokens.
+    Labels only ADD tokens; the pin-count gate and ``min_corroboration`` are
+    unchanged. A candidate that clears ``min_corroboration`` only because of
+    label tokens is reported with basis ``"label_corroborated"`` (vs
+    ``"pinout"``). With ``label_tokens=None`` this is byte-identical.
     """
     pin_count = component_pin_count(ref, design)
     comp = design.components.get(ref)
     footprint = (comp.footprint if comp else "") or ""
     fp_upper = footprint.upper()
-    net_tokens: set[str] = set()
+    ref_nets = _net_names_of(ref, design)
+    name_tokens: set[str] = set()
     if use_names:
-        for n in _net_names_of(ref, design):
-            net_tokens |= _tokens(n)
+        for n in ref_nets:
+            name_tokens |= _tokens(n)
+    net_tokens = set(name_tokens)
+    if label_tokens:
+        for n in ref_nets:
+            net_tokens |= label_tokens.get(n, set())
 
     pin_candidates = [
         connectors[name]
@@ -219,7 +238,7 @@ def classify_connector(
     for sig in pin_candidates:
         fp_hit = any(h.upper() in fp_upper for h in sig.footprint_hints) if fp_upper else False
         n_func = (
-            sum(1 for h in sig.function_hints if _hint_hits(h, net_tokens)) if use_names else 0
+            sum(1 for h in sig.function_hints if _hint_hits(h, net_tokens)) if net_tokens else 0
         )
         # honesty gate: no footprint hint AND too little pinout corroboration ->
         # reject this candidate (do not force a same-pin-count false match).
@@ -229,7 +248,16 @@ def classify_connector(
         if fp_hit:
             score += FOOTPRINT_BUMP
         score += min(n_func * CORROBORATION_STEP, CORROBORATION_CAP)
-        basis = "footprint" if fp_hit else "pinout"
+        if fp_hit:
+            basis = "footprint"
+        else:
+            # attribute the pinout: did net names ALONE clear min_corroboration?
+            n_func_name = (
+                sum(1 for h in sig.function_hints if _hint_hits(h, name_tokens))
+                if name_tokens
+                else 0
+            )
+            basis = "pinout" if n_func_name >= sig.min_corroboration else "label_corroborated"
         scored.append((score, basis, sig.name))
 
     if not scored:
