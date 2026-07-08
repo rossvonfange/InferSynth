@@ -23,6 +23,8 @@ from infersynth.recognize import (
     LabelClaim,
     classify_nets,
     hierarchical_recognize,
+    load_subsystem_cells,
+    promote_result,
     restrict_netlist,
     segment,
 )
@@ -496,3 +498,77 @@ def test_polarfire_board_segments_sanely(tmp_path: Path, catalog: Catalog) -> No
 
     # determinism holds for the absorption pass on the real board too.
     assert segment(design, catalog, absorb_passives=True).to_json() == res.to_json()
+
+
+@pytest.mark.kicad
+@pytest.mark.slow
+@pytest.mark.skipif(_KICAD is None, reason="kicad-cli not on PATH")
+@pytest.mark.skipif(not _BRD.is_file(), reason="PolarFire .brd reference absent")
+def test_polarfire_promote_closes_the_foundry_loop(tmp_path: Path, catalog: Catalog) -> None:
+    """THE FOUNDRY LOOP: promote the board's unrecognized segments into generated
+    subsystem_cell.yaml stubs, drop them into the catalog, and re-recognize the
+    SAME board — the previously-promoted segments now RECOGNIZE. promote -> cell
+    -> recognize, closed on a real vendor board."""
+    out_pcb = tmp_path / "pf.kicad_pcb"
+    proc = subprocess.run(
+        ["kicad-cli", "pcb", "import", "--format", "auto", "-o", str(out_pcb), str(_BRD)],
+        capture_output=True,
+        text=True,
+        timeout=420,
+    )
+    if not out_pcb.is_file():
+        pytest.skip(f"kicad-cli import failed: {(proc.stderr or proc.stdout).strip()}")
+    design = _design_netlist_from_pcb(out_pcb)
+
+    # BEFORE: recognize the board against the seeded catalog.
+    before = hierarchical_recognize(design, catalog)
+    n_recog_before = len(before.recognized_subsystem)
+    n_promoted_before = len(before.promoted_candidates)
+    assert n_promoted_before > 0, "expected promotable segments on the PolarFire board"
+
+    # PROMOTE: every unrecognized segment -> a reviewable subsystem_cell.yaml.
+    promoted_dir = tmp_path / "promoted"
+    written = promote_result(before, design, promoted_dir, board_hint="polarfire-discovery")
+    n_cells = len(written)
+    assert n_cells > 0, "promotion should generate >=1 subsystem cell"
+    # distinct shapes generated (DDR interface / gpio bank / display / sdio ...)
+    gen_cells = load_subsystem_cells(promoted_dir)
+    gen_kinds = sorted({c.interface.kind for c in gen_cells.values()})
+
+    # every generated stub is marked provisional / needs-review.
+    import yaml
+
+    for path in written:
+        data = yaml.safe_load(path.read_text())
+        assert data["provenance"]["needs_review"] is True
+        assert data["provenance"]["generated_by"] == "promote/v0"
+    assert (promoted_dir / "PROMOTED.md").is_file()
+
+    # DROP the generated cells into the catalog (union with the seeded ones).
+    catalog2 = Catalog.load(CATALOG_DIR)
+    catalog2.subsystem_cells = {**catalog2.subsystem_cells, **gen_cells}
+
+    # RE-RECOGNIZE the SAME board: promoted segments now recognize.
+    after = hierarchical_recognize(design, catalog2)
+    n_recog_after = len(after.recognized_subsystem)
+    n_promoted_after = len(after.promoted_candidates)
+
+    print(
+        f"\n[polarfire foundry loop] generated {n_cells} distinct subsystem "
+        f"cell(s) {gen_kinds}; recognized_subsystem {n_recog_before} -> "
+        f"{n_recog_after}; promoted {n_promoted_before} -> {n_promoted_after}"
+    )
+
+    # THE LOOP CLOSING: recognition jumps, promotion drops, by construction.
+    assert n_recog_after > n_recog_before, (n_recog_before, n_recog_after)
+    assert n_promoted_after < n_promoted_before, (n_promoted_before, n_promoted_after)
+    # segmentation is unchanged, so every previously-promoted interface segment
+    # that yielded a cell is now recognized: recognized gains >= distinct cells.
+    assert n_recog_after - n_recog_before >= n_cells, (
+        n_recog_before, n_recog_after, n_cells
+    )
+    # determinism of promotion on the real board.
+    written2 = promote_result(
+        before, design, tmp_path / "promoted2", board_hint="polarfire-discovery"
+    )
+    assert [p.read_text() for p in written] == [p.read_text() for p in written2]
