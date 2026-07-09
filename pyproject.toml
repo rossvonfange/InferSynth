@@ -42,6 +42,13 @@ infersynth = "infersynth.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["infersynth"]
 
+# The catalog DATA (191 cell/interface/taxonomy files) lives at the repo root,
+# a sibling of the package; callers find it via `infersynth.__file__.parent.parent
+# / "catalog"`. Ship it at the wheel root so that lookup resolves post-install
+# (site-packages/catalog) exactly as it does in the dev tree.
+[tool.hatch.build.targets.wheel.force-include]
+"catalog" = "catalog"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
